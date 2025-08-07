@@ -5,12 +5,6 @@ on:
     # Run every 6 hours at 00:30, 06:30, 12:30, 18:30 UTC
     - cron: '30 */6 * * *'
   workflow_dispatch:  # Allow manual triggering
-    inputs:
-      forecast_hour:
-        description: 'Forecast hour (000-384)'
-        required: false
-        default: '000'
-        type: string
 
 permissions:
   contents: write
@@ -67,13 +61,12 @@ jobs:
         run: |
           GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
           GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
-          FORECAST_HOUR="${{ github.event.inputs.forecast_hour || '000' }}"
           
           # Create directory for raw data
           mkdir -p raw-data
           cd raw-data
           
-          echo "Downloading GFS data for ${GFS_DATE}/${GFS_RUN}Z, forecast hour: ${FORECAST_HOUR}"
+          echo "Downloading current GFS data for ${GFS_DATE}/${GFS_RUN}Z"
           
           # Function to try downloading with fallback to previous runs
           download_with_fallback() {
@@ -88,7 +81,7 @@ jobs:
               echo "Attempt $attempt: Downloading ${var_name} for ${current_date}/${current_run}Z..."
               
               if curl -f -o "$output_file" \
-                "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${current_run}z.pgrb2.0p25.f${FORECAST_HOUR}&var_${var_name}=on&lev_${lev_name}=on&dir=%2Fgfs.${current_date}%2F${current_run}%2Fatmos"; then
+                "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${current_run}z.pgrb2.0p25.f000&var_${var_name}=on&lev_${lev_name}=on&dir=%2Fgfs.${current_date}%2F${current_run}%2Fatmos"; then
                 echo "Successfully downloaded ${var_name}"
                 return 0
               fi
@@ -114,13 +107,10 @@ jobs:
           }
           
           # Download U component of wind at 10m above ground
-          download_with_fallback "UGRD" "10_m_above_ground" "wind_u_${FORECAST_HOUR}.grib"
+          download_with_fallback "UGRD" "10_m_above_ground" "wind_u_current.grib"
           
           # Download V component of wind at 10m above ground  
-          download_with_fallback "VGRD" "10_m_above_ground" "wind_v_${FORECAST_HOUR}.grib"
-            
-          # Download temperature at 2m above ground (optional)
-          download_with_fallback "TMP" "2_m_above_ground" "temp_${FORECAST_HOUR}.grib"
+          download_with_fallback "VGRD" "10_m_above_ground" "wind_v_current.grib"
           
           # List downloaded files
           echo "Files downloaded:"
@@ -128,77 +118,54 @@ jobs:
 
       - name: Process GRIB to WeatherLayers format
         run: |
-          # Ensure processed-data directory exists
-          mkdir -p processed-data
           cd raw-data
-          FORECAST_HOUR="${{ github.event.inputs.forecast_hour || '000' }}"
+          GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
+          GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
           
           # Check if wind files exist
-          if [[ -f "wind_u_${FORECAST_HOUR}.grib" && -f "wind_v_${FORECAST_HOUR}.grib" ]]; then
+          if [[ -f "wind_u_current.grib" && -f "wind_v_current.grib" ]]; then
             echo "Processing wind data..."
             
             # Get info about the GRIB files
             echo "Wind U info:"
-            gdalinfo "wind_u_${FORECAST_HOUR}.grib"
+            gdalinfo "wind_u_current.grib"
             echo "Wind V info:"  
-            gdalinfo "wind_v_${FORECAST_HOUR}.grib"
+            gdalinfo "wind_v_current.grib"
             
             # Create VRT (Virtual Dataset) combining U and V components
             # Note: Third band duplicates V for proper RGBA structure (weatherlayers-gl uses RG channels)
-            gdalbuildvrt -separate "wind_${FORECAST_HOUR}.vrt" "wind_u_${FORECAST_HOUR}.grib" "wind_v_${FORECAST_HOUR}.grib" "wind_v_${FORECAST_HOUR}.grib"
+            gdalbuildvrt -separate "wind_current.vrt" "wind_u_current.grib" "wind_v_current.grib" "wind_v_current.grib"
             
             # Convert to PNG format for weatherlayers-gl
             # WeatherLayers expects: R=U component, G=V component, scaled to [0,255] with 128 as zero
             # Scale from [-30, 30] m/s to [0, 255] range (128 = 0 m/s)
-            gdal_translate -ot Byte -scale -30 30 0 255 -of PNG "wind_${FORECAST_HOUR}.vrt" "../processed-data/wind_${FORECAST_HOUR}.png"
+            gdal_translate -ot Byte -scale -30 30 0 255 -of PNG "wind_current.vrt" "../processed-data/wind_${GFS_DATE}_${GFS_RUN}z.png"
             
-            echo "Wind data processed successfully"
+            echo "Wind data processed successfully: wind_${GFS_DATE}_${GFS_RUN}z.png"
           else
             echo "Wind GRIB files not found, skipping wind processing"
-          fi
-          
-          # Process temperature if available
-          if [[ -f "temp_${FORECAST_HOUR}.grib" ]]; then
-            echo "Processing temperature data..."
-            
-            # Get temperature range (typical: 200-320 Kelvin)
-            gdalinfo "temp_${FORECAST_HOUR}.grib"
-            
-            # Convert temperature to PNG (scale from ~200K-320K to 0-255)
-            gdal_translate -ot Byte -scale 200 320 0 255 -of PNG "temp_${FORECAST_HOUR}.grib" "../processed-data/temp_${FORECAST_HOUR}.png"
-            
-            echo "Temperature data processed successfully"
-          else
-            echo "Temperature GRIB file not found, skipping temperature processing"
           fi
 
       - name: Generate metadata
         run: |
           GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
           GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
-          FORECAST_HOUR="${{ github.event.inputs.forecast_hour || '000' }}"
           
           # Create metadata JSON
-          cat > processed-data/metadata.json << EOF
+          cat > processed-data/metadata_${GFS_DATE}_${GFS_RUN}z.json << EOF
           {
             "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "gfs_date": "${GFS_DATE}",
             "gfs_run": "${GFS_RUN}",
-            "forecast_hour": "${FORECAST_HOUR}",
+            "forecast_hour": "000",
             "bounds": [-180, -90, 180, 90],
             "layers": {
               "wind": {
-                "file": "wind_${FORECAST_HOUR}.png",
+                "file": "wind_${GFS_DATE}_${GFS_RUN}z.png",
                 "type": "vector",
                 "units": "m/s",
                 "range": [-30, 30],
                 "encoding": "RG channels, 128=0 m/s, scale 0-255"
-              },
-              "temperature": {
-                "file": "temp_${FORECAST_HOUR}.png", 
-                "type": "scalar",
-                "units": "K",
-                "range": [200, 320]
               }
             }
           }
@@ -224,10 +191,11 @@ jobs:
             git push
           fi
 
-      - name: Clean up old data (keep last 7 days)
+      - name: Clean up old data (keep last 3 days)
         run: |
-          # Remove files older than 7 days to prevent repository bloat
-          find processed-data/ -name "*.png" -mtime +7 -delete || true
+          # Remove PNG and metadata files older than 3 days to prevent repository bloat
+          find processed-data/ -name "*.png" -mtime +3 -delete || true
+          find processed-data/ -name "*.json" -mtime +3 -delete || true
           find raw-data/ -name "*.grib" -delete || true
           
           # Commit cleanup if any files were removed
@@ -235,6 +203,6 @@ jobs:
             git config --local user.email "action@github.com"
             git config --local user.name "GitHub Action"
             git add processed-data/
-            git commit -m "Clean up old weather data"
+            git commit -m "Clean up old weather data (keep 3 days)"
             git push
           fi
