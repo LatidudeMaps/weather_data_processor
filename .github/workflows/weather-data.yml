@@ -12,6 +12,9 @@ on:
         default: '000'
         type: string
 
+permissions:
+  contents: write
+
 jobs:
   process-grib-data:
     runs-on: ubuntu-latest
