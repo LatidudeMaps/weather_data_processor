@@ -1,7 +1,7 @@
 {
-  "timestamp": "2025-08-07T10:11:32Z",
+  "timestamp": "2025-08-07T12:23:17Z",
   "gfs_date": "20250807",
-  "gfs_run": "06",
+  "gfs_run": "12",
   "forecast_hour": "000",
   "bounds": [-180, -90, 180, 90],
   "layers": {
@@ -9,7 +9,8 @@
       "file": "wind_000.png",
       "type": "vector",
       "units": "m/s",
-      "range": [-50, 50]
+      "range": [-30, 30],
+      "encoding": "RG channels, 128=0 m/s, scale 0-255"
     },
     "temperature": {
       "file": "temp_000.png", 
