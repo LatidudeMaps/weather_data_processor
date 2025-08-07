@@ -92,6 +92,8 @@ jobs:
 
       - name: Process GRIB to WeatherLayers format
         run: |
+          # Ensure processed-data directory exists
+          mkdir -p processed-data
           cd raw-data
           FORECAST_HOUR="${{ github.event.inputs.forecast_hour || '000' }}"
           
