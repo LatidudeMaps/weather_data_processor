@@ -1,0 +1,21 @@
+{
+  "timestamp": "2025-08-07T10:11:32Z",
+  "gfs_date": "20250807",
+  "gfs_run": "06",
+  "forecast_hour": "000",
+  "bounds": [-180, -90, 180, 90],
+  "layers": {
+    "wind": {
+      "file": "wind_000.png",
+      "type": "vector",
+      "units": "m/s",
+      "range": [-50, 50]
+    },
+    "temperature": {
+      "file": "temp_000.png", 
+      "type": "scalar",
+      "units": "K",
+      "range": [200, 320]
+    }
+  }
+}
