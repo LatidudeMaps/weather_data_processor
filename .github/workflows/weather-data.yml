@@ -111,11 +111,13 @@ jobs:
             gdalinfo "wind_v_${FORECAST_HOUR}.grib"
             
             # Create VRT (Virtual Dataset) combining U and V components
-            gdalbuildvrt -separate "wind_${FORECAST_HOUR}.vrt" "wind_u_${FORECAST_HOUR}.grib" "wind_v_${FORECAST_HOUR}.grib"
+            # Note: Third band duplicates V for proper RGBA structure (weatherlayers-gl uses RG channels)
+            gdalbuildvrt -separate "wind_${FORECAST_HOUR}.vrt" "wind_u_${FORECAST_HOUR}.grib" "wind_v_${FORECAST_HOUR}.grib" "wind_v_${FORECAST_HOUR}.grib"
             
             # Convert to PNG format for weatherlayers-gl
-            # Scale wind values from typical range [-50, 50] m/s to [0, 255]
-            gdal_translate -ot Byte -scale -50 50 0 255 -of PNG "wind_${FORECAST_HOUR}.vrt" "../processed-data/wind_${FORECAST_HOUR}.png"
+            # WeatherLayers expects: R=U component, G=V component, scaled to [0,255] with 128 as zero
+            # Scale from [-30, 30] m/s to [0, 255] range (128 = 0 m/s)
+            gdal_translate -ot Byte -scale -30 30 0 255 -of PNG "wind_${FORECAST_HOUR}.vrt" "../processed-data/wind_${FORECAST_HOUR}.png"
             
             echo "Wind data processed successfully"
           else
@@ -156,7 +158,8 @@ jobs:
                 "file": "wind_${FORECAST_HOUR}.png",
                 "type": "vector",
                 "units": "m/s",
-                "range": [-50, 50]
+                "range": [-30, 30],
+                "encoding": "RG channels, 128=0 m/s, scale 0-255"
               },
               "temperature": {
                 "file": "temp_${FORECAST_HOUR}.png", 
