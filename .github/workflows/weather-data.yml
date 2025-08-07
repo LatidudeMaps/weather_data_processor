@@ -37,23 +37,26 @@ jobs:
         id: gfs-info
         run: |
           # Get current date and determine the latest available GFS run
+          # GFS data is usually available 3-4 hours after model run time
           CURRENT_HOUR=$(date -u +%H)
           
-          if [ $CURRENT_HOUR -ge 18 ]; then
+          # Account for GFS data availability delay (usually 3-4 hours)
+          if [ $CURRENT_HOUR -ge 21 ]; then
             GFS_RUN="18"
-          elif [ $CURRENT_HOUR -ge 12 ]; then
-            GFS_RUN="12" 
-          elif [ $CURRENT_HOUR -ge 6 ]; then
-            GFS_RUN="06"
-          else
-            GFS_RUN="00"
-          fi
-          
-          # Use yesterday's date if current hour is before 6 UTC
-          if [ $CURRENT_HOUR -lt 6 ]; then
-            GFS_DATE=$(date -u -d "yesterday" +%Y%m%d)
-          else
             GFS_DATE=$(date -u +%Y%m%d)
+          elif [ $CURRENT_HOUR -ge 15 ]; then
+            GFS_RUN="12" 
+            GFS_DATE=$(date -u +%Y%m%d)
+          elif [ $CURRENT_HOUR -ge 9 ]; then
+            GFS_RUN="06"
+            GFS_DATE=$(date -u +%Y%m%d)
+          elif [ $CURRENT_HOUR -ge 3 ]; then
+            GFS_RUN="00"
+            GFS_DATE=$(date -u +%Y%m%d)
+          else
+            # Use previous day's 18Z run
+            GFS_RUN="18"
+            GFS_DATE=$(date -u -d "yesterday" +%Y%m%d)
           fi
           
           echo "gfs_date=$GFS_DATE" >> $GITHUB_OUTPUT
@@ -72,26 +75,56 @@ jobs:
           
           echo "Downloading GFS data for ${GFS_DATE}/${GFS_RUN}Z, forecast hour: ${FORECAST_HOUR}"
           
+          # Function to try downloading with fallback to previous runs
+          download_with_fallback() {
+            local var_name=$1
+            local lev_name=$2
+            local output_file=$3
+            local current_date=$GFS_DATE
+            local current_run=$GFS_RUN
+            
+            # Try current run first
+            for attempt in 1 2 3; do
+              echo "Attempt $attempt: Downloading ${var_name} for ${current_date}/${current_run}Z..."
+              
+              if curl -f -o "$output_file" \
+                "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${current_run}z.pgrb2.0p25.f${FORECAST_HOUR}&var_${var_name}=on&lev_${lev_name}=on&dir=%2Fgfs.${current_date}%2F${current_run}%2Fatmos"; then
+                echo "Successfully downloaded ${var_name}"
+                return 0
+              fi
+              
+              # Fallback to previous run
+              if [ "$current_run" = "18" ]; then
+                current_run="12"
+              elif [ "$current_run" = "12" ]; then
+                current_run="06"
+              elif [ "$current_run" = "06" ]; then
+                current_run="00"
+              else
+                # Go to previous day's 18Z
+                current_date=$(date -u -d "${current_date:0:4}-${current_date:4:2}-${current_date:6:2} - 1 day" +%Y%m%d)
+                current_run="18"
+              fi
+              
+              echo "Trying fallback: ${current_date}/${current_run}Z"
+            done
+            
+            echo "Failed to download ${var_name} after all attempts"
+            return 1
+          }
+          
           # Download U component of wind at 10m above ground
-          echo "Downloading U wind component..."
-          curl -f -o "wind_u_${FORECAST_HOUR}.grib" \
-            "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${GFS_RUN}z.pgrb2.0p25.f${FORECAST_HOUR}&var_UGRD=on&lev_10_m_above_ground=on&dir=%2Fgfs.${GFS_DATE}%2F${GFS_RUN}%2Fatmos" \
-            || echo "Failed to download U component"
+          download_with_fallback "UGRD" "10_m_above_ground" "wind_u_${FORECAST_HOUR}.grib"
           
           # Download V component of wind at 10m above ground  
-          echo "Downloading V wind component..."
-          curl -f -o "wind_v_${FORECAST_HOUR}.grib" \
-            "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${GFS_RUN}z.pgrb2.0p25.f${FORECAST_HOUR}&var_VGRD=on&lev_10_m_above_ground=on&dir=%2Fgfs.${GFS_DATE}%2F${GFS_RUN}%2Fatmos" \
-            || echo "Failed to download V component"
+          download_with_fallback "VGRD" "10_m_above_ground" "wind_v_${FORECAST_HOUR}.grib"
             
           # Download temperature at 2m above ground (optional)
-          echo "Downloading temperature..."
-          curl -f -o "temp_${FORECAST_HOUR}.grib" \
-            "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${GFS_RUN}z.pgrb2.0p25.f${FORECAST_HOUR}&var_TMP=on&lev_2_m_above_ground=on&dir=%2Fgfs.${GFS_DATE}%2F${GFS_RUN}%2Fatmos" \
-            || echo "Failed to download temperature"
+          download_with_fallback "TMP" "2_m_above_ground" "temp_${FORECAST_HOUR}.grib"
           
           # List downloaded files
-          ls -la *.grib || echo "No GRIB files downloaded"
+          echo "Files downloaded:"
+          ls -la *.grib 2>/dev/null || echo "No GRIB files downloaded"
 
       - name: Process GRIB to WeatherLayers format
         run: |
