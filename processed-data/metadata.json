@@ -1,7 +1,7 @@
 {
-  "timestamp": "2025-08-07T12:23:17Z",
+  "timestamp": "2025-08-07T12:44:03Z",
   "gfs_date": "20250807",
-  "gfs_run": "12",
+  "gfs_run": "06",
   "forecast_hour": "000",
   "bounds": [-180, -90, 180, 90],
   "layers": {
