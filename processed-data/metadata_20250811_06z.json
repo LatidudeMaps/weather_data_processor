@@ -1,0 +1,16 @@
+{
+  "timestamp": "2025-08-11T12:45:32Z",
+  "gfs_date": "20250811",
+  "gfs_run": "06",
+  "forecast_hour": "000",
+  "bounds": [-180, -90, 180, 90],
+  "layers": {
+    "wind": {
+      "file": "wind_20250811_06z.png",
+      "type": "vector",
+      "units": "m/s",
+      "range": [-30, 30],
+      "encoding": "RG channels, 128=0 m/s, scale 0-255"
+    }
+  }
+}
