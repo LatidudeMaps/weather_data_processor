@@ -87,7 +87,7 @@ jobs:
           # Temperature
           download_with_fallback "TMP" "2_m_above_ground" "temp_current.grib"
           # Reflectivity
-          download_with_fallback "REFC" "1000_m_above_ground" "reflectivity_current.grib"
+          download_with_fallback "REFC" "entire_atmosphere" "reflectivity_current.grib"
 
       - name: Process GRIB to WeatherLayers format
         run: |
