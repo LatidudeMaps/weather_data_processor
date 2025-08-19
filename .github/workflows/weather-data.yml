@@ -95,8 +95,12 @@ jobs:
             return 1
           }
           
+          # Wind data
           download_with_fallback "UGRD" "10_m_above_ground" "wind_u_current.grib"
           download_with_fallback "VGRD" "10_m_above_ground" "wind_v_current.grib"
+          
+          # Cloud cover (entire atmosphere)
+          download_with_fallback "TCDC" "entire_atmosphere" "cloud_current.grib"
           
           echo "Files downloaded:"
           ls -la *.grib 2>/dev/null || echo "No GRIB files downloaded"
@@ -107,17 +111,23 @@ jobs:
           GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
           GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
           
+          # Process wind
           if [[ -f "wind_u_current.grib" && -f "wind_v_current.grib" ]]; then
             echo "Processing wind data..."
-            gdalinfo "wind_u_current.grib"
-            gdalinfo "wind_v_current.grib"
-            
             gdalbuildvrt -separate "wind_current.vrt" "wind_u_current.grib" "wind_v_current.grib" "wind_v_current.grib"
-            
             gdal_translate -ot Byte -scale -30 30 0 255 -of PNG "wind_current.vrt" "../processed-data/wind_${GFS_DATE}_${GFS_RUN}z.png"
             echo "Wind data processed successfully: wind_${GFS_DATE}_${GFS_RUN}z.png"
           else
             echo "Wind GRIB files not found, skipping wind processing"
+          fi
+          
+          # Process cloud
+          if [[ -f "cloud_current.grib" ]]; then
+            echo "Processing cloud cover data..."
+            gdal_translate -ot Byte -scale 0 100 0 255 -of PNG "cloud_current.grib" "../processed-data/cloud_${GFS_DATE}_${GFS_RUN}z.png"
+            echo "Cloud cover processed successfully: cloud_${GFS_DATE}_${GFS_RUN}z.png"
+          else
+            echo "Cloud GRIB file not found, skipping cloud processing"
           fi
 
       - name: Generate metadata
@@ -139,6 +149,13 @@ jobs:
                 "units": "m/s",
                 "range": [-30, 30],
                 "encoding": "RG channels, 128=0 m/s, scale 0-255"
+              },
+              "cloud": {
+                "file": "cloud_${GFS_DATE}_${GFS_RUN}z.png",
+                "type": "raster",
+                "units": "%",
+                "range": [0, 100],
+                "encoding": "0=clear sky, 255=overcast"
               }
             }
           }
