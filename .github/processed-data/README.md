@@ -1,1 +1,0 @@
-This folder contains data retrieved by the experimental scheduled GitHub Workflow, that pulls raw GRIB files from GFS (via https://nomads.ncep.noaa.gov) and uses gdal to process them into readable data for Weatherlayers GL
