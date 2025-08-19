@@ -175,6 +175,42 @@ jobs:
           echo "Generated files:"
           ls -la processed-data/
 
+      - name: Clean up old processed data (keep last 7 days)
+        run: |
+          echo "Cleaning up files older than 7 days in processed-data folder..."
+          
+          # Create processed-data directory if it doesn't exist
+          mkdir -p processed-data
+          
+          # Show current files before cleanup
+          echo "Files before cleanup:"
+          find processed-data/ -type f | sort
+          
+          # Remove PNG files older than 7 days
+          DELETED_PNG=$(find processed-data/ -name "*.png" -mtime +7 -exec rm -v {} \; | wc -l)
+          echo "Deleted $DELETED_PNG PNG files older than 7 days"
+          
+          # Remove JSON metadata files older than 7 days
+          DELETED_JSON=$(find processed-data/ -name "*.json" -mtime +7 -exec rm -v {} \; | wc -l)
+          echo "Deleted $DELETED_JSON JSON files older than 7 days"
+          
+          # Remove any other files older than 7 days (catch-all)
+          DELETED_OTHER=$(find processed-data/ -type f ! -name "*.png" ! -name "*.json" -mtime +7 -exec rm -v {} \; | wc -l)
+          echo "Deleted $DELETED_OTHER other files older than 7 days"
+          
+          # Clean up temporary raw data (always delete these)
+          if [ -d "raw-data" ]; then
+            echo "Cleaning up raw-data directory..."
+            rm -rf raw-data/
+            echo "Raw data directory removed"
+          fi
+          
+          # Show remaining files after cleanup
+          echo "Files after cleanup:"
+          find processed-data/ -type f | sort
+          
+          echo "Cleanup completed. Total files deleted: $((DELETED_PNG + DELETED_JSON + DELETED_OTHER))"
+
       - name: Commit and push processed data
         run: |
           git config --local user.email "action@github.com"
@@ -191,18 +227,17 @@ jobs:
             git push
           fi
 
-      - name: Clean up old data (keep last 3 days)
+      - name: Commit cleanup changes
         run: |
-          # Remove PNG and metadata files older than 3 days to prevent repository bloat
-          find processed-data/ -name "*.png" -mtime +3 -delete || true
-          find processed-data/ -name "*.json" -mtime +3 -delete || true
-          find raw-data/ -name "*.grib" -delete || true
-          
-          # Commit cleanup if any files were removed
+          # Check if cleanup resulted in file deletions that need to be committed
           if ! git diff --exit-code processed-data/; then
+            echo "Committing cleanup changes..."
             git config --local user.email "action@github.com"
             git config --local user.name "GitHub Action"
             git add processed-data/
-            git commit -m "Clean up old weather data (keep 3 days)"
+            git commit -m "Clean up old weather data (keep 7 days) - $(date -u +%Y-%m-%d_%H:%M)Z"
             git push
+            echo "Cleanup changes committed and pushed"
+          else
+            echo "No cleanup changes to commit"
           fi
