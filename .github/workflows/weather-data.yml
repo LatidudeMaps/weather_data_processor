@@ -2,9 +2,8 @@ name: Process Weather Data
 
 on:
   schedule:
-    # Run every 6 hours at 00:30, 06:30, 12:30, 18:30 UTC
-    - cron: '30 */6 * * *'
-  workflow_dispatch:  # Allow manual triggering
+    - cron: '30 */6 * * *'   # Run every 6 hours
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -29,12 +28,11 @@ jobs:
         id: gfs-info
         run: |
           CURRENT_HOUR=$(date -u +%H)
-          
           if [ $CURRENT_HOUR -ge 21 ]; then
             GFS_RUN="18"
             GFS_DATE=$(date -u +%Y%m%d)
           elif [ $CURRENT_HOUR -ge 15 ]; then
-            GFS_RUN="12" 
+            GFS_RUN="12"
             GFS_DATE=$(date -u +%Y%m%d)
           elif [ $CURRENT_HOUR -ge 9 ]; then
             GFS_RUN="06"
@@ -46,20 +44,15 @@ jobs:
             GFS_RUN="18"
             GFS_DATE=$(date -u -d "yesterday" +%Y%m%d)
           fi
-          
           echo "gfs_date=$GFS_DATE" >> $GITHUB_OUTPUT
           echo "gfs_run=$GFS_RUN" >> $GITHUB_OUTPUT
-          echo "Processing GFS data for date: $GFS_DATE, run: ${GFS_RUN}Z"
 
       - name: Download GFS GRIB data
         run: |
           GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
           GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
-          
           mkdir -p raw-data
           cd raw-data
-          
-          echo "Downloading current GFS data for ${GFS_DATE}/${GFS_RUN}Z"
           
           download_with_fallback() {
             local var_name=$1
@@ -67,16 +60,11 @@ jobs:
             local output_file=$3
             local current_date=$GFS_DATE
             local current_run=$GFS_RUN
-            
             for attempt in 1 2 3; do
-              echo "Attempt $attempt: Downloading ${var_name} for ${current_date}/${current_run}Z..."
-              
               if curl -f -o "$output_file" \
                 "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${current_run}z.pgrb2.0p25.f000&var_${var_name}=on&lev_${lev_name}=on&dir=%2Fgfs.${current_date}%2F${current_run}%2Fatmos"; then
-                echo "Successfully downloaded ${var_name}"
                 return 0
               fi
-              
               if [ "$current_run" = "18" ]; then
                 current_run="12"
               elif [ "$current_run" = "12" ]; then
@@ -87,23 +75,19 @@ jobs:
                 current_date=$(date -u -d "${current_date:0:4}-${current_date:4:2}-${current_date:6:2} - 1 day" +%Y%m%d)
                 current_run="18"
               fi
-              
-              echo "Trying fallback: ${current_date}/${current_run}Z"
             done
-            
-            echo "Failed to download ${var_name} after all attempts"
             return 1
           }
           
-          # Wind data
+          # Wind
           download_with_fallback "UGRD" "10_m_above_ground" "wind_u_current.grib"
           download_with_fallback "VGRD" "10_m_above_ground" "wind_v_current.grib"
-          
-          # Cloud cover (entire atmosphere)
+          # Cloud
           download_with_fallback "TCDC" "entire_atmosphere" "cloud_current.grib"
-          
-          echo "Files downloaded:"
-          ls -la *.grib 2>/dev/null || echo "No GRIB files downloaded"
+          # Temperature
+          download_with_fallback "TMP" "2_m_above_ground" "temp_current.grib"
+          # Reflectivity
+          download_with_fallback "REFC" "1000_m_above_ground" "reflectivity_current.grib"
 
       - name: Process GRIB to WeatherLayers format
         run: |
@@ -111,30 +95,31 @@ jobs:
           GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
           GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
           
-          # Process wind
+          # Wind
           if [[ -f "wind_u_current.grib" && -f "wind_v_current.grib" ]]; then
-            echo "Processing wind data..."
             gdalbuildvrt -separate "wind_current.vrt" "wind_u_current.grib" "wind_v_current.grib" "wind_v_current.grib"
             gdal_translate -ot Byte -scale -30 30 0 255 -of PNG "wind_current.vrt" "../processed-data/wind_${GFS_DATE}_${GFS_RUN}z.png"
-            echo "Wind data processed successfully: wind_${GFS_DATE}_${GFS_RUN}z.png"
-          else
-            echo "Wind GRIB files not found, skipping wind processing"
           fi
           
-          # Process cloud
+          # Cloud
           if [[ -f "cloud_current.grib" ]]; then
-            echo "Processing cloud cover data..."
             gdal_translate -ot Byte -scale 0 100 0 255 -of PNG "cloud_current.grib" "../processed-data/cloud_${GFS_DATE}_${GFS_RUN}z.png"
-            echo "Cloud cover processed successfully: cloud_${GFS_DATE}_${GFS_RUN}z.png"
-          else
-            echo "Cloud GRIB file not found, skipping cloud processing"
+          fi
+          
+          # Temperature
+          if [[ -f "temp_current.grib" ]]; then
+            gdal_translate -ot Byte -scale 233.15 323.15 0 255 -of PNG "temp_current.grib" "../processed-data/temp_${GFS_DATE}_${GFS_RUN}z.png"
+          fi
+          
+          # Reflectivity
+          if [[ -f "reflectivity_current.grib" ]]; then
+            gdal_translate -ot Byte -scale 0 70 0 255 -of PNG "reflectivity_current.grib" "../processed-data/reflectivity_${GFS_DATE}_${GFS_RUN}z.png"
           fi
 
       - name: Generate metadata
         run: |
           GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
           GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
-          
           cat > processed-data/metadata_${GFS_DATE}_${GFS_RUN}z.json << EOF
           {
             "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -156,51 +141,40 @@ jobs:
                 "units": "%",
                 "range": [0, 100],
                 "encoding": "0=clear sky, 255=overcast"
+              },
+              "temperature": {
+                "file": "temp_${GFS_DATE}_${GFS_RUN}z.png",
+                "type": "raster",
+                "units": "°C",
+                "range": [-40, 50],
+                "encoding": "scaled 0-255 from -40°C to +50°C"
+              },
+              "reflectivity": {
+                "file": "reflectivity_${GFS_DATE}_${GFS_RUN}z.png",
+                "type": "raster",
+                "units": "dBZ",
+                "range": [0, 70],
+                "encoding": "scaled 0-255 from 0–70 dBZ"
               }
             }
           }
           EOF
-          
-          echo "Generated files:"
-          ls -la processed-data/
 
       - name: Clean up old processed data (keep last 7 days)
         run: |
-          echo "Cleaning up files older than 7 days in processed-data folder..."
-          mkdir -p processed-data
-          
-          echo "Files before cleanup:"
-          find processed-data/ -type f | sort
-          
           CUTOFF_DATE=$(date -u -d "7 days ago" +%Y%m%d)
-          echo "Cutoff date: $CUTOFF_DATE (files from this date and older will be deleted)"
-          
           DELETED_COUNT=0
-          
           while IFS= read -r file; do
             filename=$(basename "$file")
             if [[ $filename =~ ([0-9]{8}) ]]; then
               file_date="${BASH_REMATCH[1]}"
               if [[ $file_date -le $CUTOFF_DATE ]]; then
-                echo "Deleting old file: $file (date: $file_date, cutoff: $CUTOFF_DATE)"
                 rm -f "$file" || true
                 DELETED_COUNT=$((DELETED_COUNT+1))
-              else
-                echo "Keeping file: $file (date: $file_date)"
               fi
-            else
-              echo "Keeping file without date pattern: $file"
             fi
           done < <(find processed-data/ -type f \( -name "*.png" -o -name "*.json" -o -name "*.aux.xml" \))
-          
-          if [ -d "raw-data" ]; then
-            echo "Cleaning up raw-data directory..."
-            rm -rf raw-data/
-            echo "Raw data directory removed"
-          fi
-          
-          echo "Files after cleanup:"
-          find processed-data/ -type f | sort
+          rm -rf raw-data/ || true
           echo "Cleanup completed. Total files deleted: $DELETED_COUNT"
 
       - name: Commit and push processed data
@@ -208,24 +182,9 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add processed-data/
-          
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
             git commit -m "Update weather data: $(date -u +%Y-%m-%d_%H:%M)Z"
             git push
-          fi
-
-      - name: Commit cleanup changes
-        run: |
-          if ! git diff --exit-code processed-data/; then
-            echo "Committing cleanup changes..."
-            git config --local user.email "action@github.com"
-            git config --local user.name "GitHub Action"
-            git add processed-data/
-            git commit -m "Clean up old weather data (keep 7 days) - $(date -u +%Y-%m-%d_%H:%M)Z"
-            git push
-            echo "Cleanup changes committed and pushed"
-          else
-            echo "No cleanup changes to commit"
           fi
