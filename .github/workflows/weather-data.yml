@@ -98,22 +98,22 @@ jobs:
           # Wind
           if [[ -f "wind_u_current.grib" && -f "wind_v_current.grib" ]]; then
             gdalbuildvrt -separate "wind_current.vrt" "wind_u_current.grib" "wind_v_current.grib" "wind_v_current.grib"
-            gdal_translate -ot Byte -scale -30 30 0 255 -of PNG "wind_current.vrt" "../processed-data/wind_${GFS_DATE}_${GFS_RUN}z.png"
+            gdal_translate -ot Float32 -scale 0 255 -of PNG "wind_current.vrt" "../processed-data/wind_${GFS_DATE}_${GFS_RUN}z.png"
           fi
           
           # Cloud
           if [[ -f "cloud_current.grib" ]]; then
-            gdal_translate -ot Byte -scale 0 100 0 255 -of PNG "cloud_current.grib" "../processed-data/cloud_${GFS_DATE}_${GFS_RUN}z.png"
+            gdal_translate -ot Float32 -scale 0 100 0 255 -of PNG "cloud_current.grib" "../processed-data/cloud_${GFS_DATE}_${GFS_RUN}z.png"
           fi
           
           # Temperature
           if [[ -f "temp_current.grib" ]]; then
-            gdal_translate -ot Byte -scale 233.15 323.15 0 255 -of PNG "temp_current.grib" "../processed-data/temp_${GFS_DATE}_${GFS_RUN}z.png"
+            gdal_translate -ot Float32 -scale 0 255 -of PNG "temp_current.grib" "../processed-data/temp_${GFS_DATE}_${GFS_RUN}z.png"
           fi
           
           # Reflectivity
           if [[ -f "reflectivity_current.grib" ]]; then
-            gdal_translate -ot Byte -scale 0 70 0 255 -of PNG "reflectivity_current.grib" "../processed-data/reflectivity_${GFS_DATE}_${GFS_RUN}z.png"
+            gdal_translate -ot Float32 -scale 0 255 -of PNG "reflectivity_current.grib" "../processed-data/reflectivity_${GFS_DATE}_${GFS_RUN}z.png"
           fi
 
       - name: Generate metadata
