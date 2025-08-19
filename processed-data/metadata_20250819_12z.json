@@ -1,0 +1,23 @@
+{
+  "timestamp": "2025-08-19T17:41:30Z",
+  "gfs_date": "20250819",
+  "gfs_run": "12",
+  "forecast_hour": "000",
+  "bounds": [-180, -90, 180, 90],
+  "layers": {
+    "wind": {
+      "file": "wind_20250819_12z.png",
+      "type": "vector",
+      "units": "m/s",
+      "range": [-30, 30],
+      "encoding": "RG channels, 128=0 m/s, scale 0-255"
+    },
+    "cloud": {
+      "file": "cloud_20250819_12z.png",
+      "type": "raster",
+      "units": "%",
+      "range": [0, 100],
+      "encoding": "0=clear sky, 255=overcast"
+    }
+  }
+}
