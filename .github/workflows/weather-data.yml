@@ -186,17 +186,30 @@ jobs:
           echo "Files before cleanup:"
           find processed-data/ -type f | sort
           
-          # Remove PNG files older than 7 days
-          DELETED_PNG=$(find processed-data/ -name "*.png" -mtime +7 -exec rm -v {} \; | wc -l)
-          echo "Deleted $DELETED_PNG PNG files older than 7 days"
+          # Calculate cutoff date (7 days ago)
+          CUTOFF_DATE=$(date -u -d "7 days ago" +%Y%m%d)
+          echo "Cutoff date: $CUTOFF_DATE (files from this date and older will be deleted)"
           
-          # Remove JSON metadata files older than 7 days
-          DELETED_JSON=$(find processed-data/ -name "*.json" -mtime +7 -exec rm -v {} \; | wc -l)
-          echo "Deleted $DELETED_JSON JSON files older than 7 days"
+          DELETED_COUNT=0
           
-          # Remove any other files older than 7 days (catch-all)
-          DELETED_OTHER=$(find processed-data/ -type f ! -name "*.png" ! -name "*.json" -mtime +7 -exec rm -v {} \; | wc -l)
-          echo "Deleted $DELETED_OTHER other files older than 7 days"
+          # Process each file and check date in filename
+          find processed-data/ -type f \( -name "*.png" -o -name "*.json" -o -name "*.aux.xml" \) | while read -r file; do
+            # Extract date from filename (pattern: YYYYMMDD)
+            filename=$(basename "$file")
+            if [[ $filename =~ ([0-9]{8}) ]]; then
+              file_date="${BASH_REMATCH[1]}"
+              if [[ $file_date -le $CUTOFF_DATE ]]; then
+                echo "Deleting old file: $file (date: $file_date, cutoff: $CUTOFF_DATE)"
+                rm -f "$file"
+                ((DELETED_COUNT++))
+              else
+                echo "Keeping file: $file (date: $file_date)"
+              fi
+            else
+              # For files without date pattern (like README.md), keep them
+              echo "Keeping file without date pattern: $file"
+            fi
+          done
           
           # Clean up temporary raw data (always delete these)
           if [ -d "raw-data" ]; then
@@ -209,7 +222,7 @@ jobs:
           echo "Files after cleanup:"
           find processed-data/ -type f | sort
           
-          echo "Cleanup completed. Total files deleted: $((DELETED_PNG + DELETED_JSON + DELETED_OTHER))"
+          echo "Cleanup completed. Total files deleted: $DELETED_COUNT"
 
       - name: Commit and push processed data
         run: |
