@@ -23,18 +23,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gdal-bin python3-gdal curl jq
-          
-          # Verify GDAL installation
           gdalinfo --version
           
       - name: Get current GFS run info
         id: gfs-info
         run: |
-          # Get current date and determine the latest available GFS run
-          # GFS data is usually available 3-4 hours after model run time
           CURRENT_HOUR=$(date -u +%H)
           
-          # Account for GFS data availability delay (usually 3-4 hours)
           if [ $CURRENT_HOUR -ge 21 ]; then
             GFS_RUN="18"
             GFS_DATE=$(date -u +%Y%m%d)
@@ -48,7 +43,6 @@ jobs:
             GFS_RUN="00"
             GFS_DATE=$(date -u +%Y%m%d)
           else
-            # Use previous day's 18Z run
             GFS_RUN="18"
             GFS_DATE=$(date -u -d "yesterday" +%Y%m%d)
           fi
@@ -62,13 +56,11 @@ jobs:
           GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
           GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
           
-          # Create directory for raw data
           mkdir -p raw-data
           cd raw-data
           
           echo "Downloading current GFS data for ${GFS_DATE}/${GFS_RUN}Z"
           
-          # Function to try downloading with fallback to previous runs
           download_with_fallback() {
             local var_name=$1
             local lev_name=$2
@@ -76,7 +68,6 @@ jobs:
             local current_date=$GFS_DATE
             local current_run=$GFS_RUN
             
-            # Try current run first
             for attempt in 1 2 3; do
               echo "Attempt $attempt: Downloading ${var_name} for ${current_date}/${current_run}Z..."
               
@@ -86,7 +77,6 @@ jobs:
                 return 0
               fi
               
-              # Fallback to previous run
               if [ "$current_run" = "18" ]; then
                 current_run="12"
               elif [ "$current_run" = "12" ]; then
@@ -94,7 +84,6 @@ jobs:
               elif [ "$current_run" = "06" ]; then
                 current_run="00"
               else
-                # Go to previous day's 18Z
                 current_date=$(date -u -d "${current_date:0:4}-${current_date:4:2}-${current_date:6:2} - 1 day" +%Y%m%d)
                 current_run="18"
               fi
@@ -106,13 +95,9 @@ jobs:
             return 1
           }
           
-          # Download U component of wind at 10m above ground
           download_with_fallback "UGRD" "10_m_above_ground" "wind_u_current.grib"
-          
-          # Download V component of wind at 10m above ground  
           download_with_fallback "VGRD" "10_m_above_ground" "wind_v_current.grib"
           
-          # List downloaded files
           echo "Files downloaded:"
           ls -la *.grib 2>/dev/null || echo "No GRIB files downloaded"
 
@@ -122,25 +107,14 @@ jobs:
           GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
           GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
           
-          # Check if wind files exist
           if [[ -f "wind_u_current.grib" && -f "wind_v_current.grib" ]]; then
             echo "Processing wind data..."
-            
-            # Get info about the GRIB files
-            echo "Wind U info:"
             gdalinfo "wind_u_current.grib"
-            echo "Wind V info:"  
             gdalinfo "wind_v_current.grib"
             
-            # Create VRT (Virtual Dataset) combining U and V components
-            # Note: Third band duplicates V for proper RGBA structure (weatherlayers-gl uses RG channels)
             gdalbuildvrt -separate "wind_current.vrt" "wind_u_current.grib" "wind_v_current.grib" "wind_v_current.grib"
             
-            # Convert to PNG format for weatherlayers-gl
-            # WeatherLayers expects: R=U component, G=V component, scaled to [0,255] with 128 as zero
-            # Scale from [-30, 30] m/s to [0, 255] range (128 = 0 m/s)
             gdal_translate -ot Byte -scale -30 30 0 255 -of PNG "wind_current.vrt" "../processed-data/wind_${GFS_DATE}_${GFS_RUN}z.png"
-            
             echo "Wind data processed successfully: wind_${GFS_DATE}_${GFS_RUN}z.png"
           else
             echo "Wind GRIB files not found, skipping wind processing"
@@ -151,7 +125,6 @@ jobs:
           GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
           GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
           
-          # Create metadata JSON
           cat > processed-data/metadata_${GFS_DATE}_${GFS_RUN}z.json << EOF
           {
             "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -171,68 +144,54 @@ jobs:
           }
           EOF
           
-          # List processed files
           echo "Generated files:"
           ls -la processed-data/
 
       - name: Clean up old processed data (keep last 7 days)
         run: |
           echo "Cleaning up files older than 7 days in processed-data folder..."
-          
-          # Create processed-data directory if it doesn't exist
           mkdir -p processed-data
           
-          # Show current files before cleanup
           echo "Files before cleanup:"
           find processed-data/ -type f | sort
           
-          # Calculate cutoff date (7 days ago)
           CUTOFF_DATE=$(date -u -d "7 days ago" +%Y%m%d)
           echo "Cutoff date: $CUTOFF_DATE (files from this date and older will be deleted)"
           
           DELETED_COUNT=0
           
-          # Process each file and check date in filename
-          find processed-data/ -type f \( -name "*.png" -o -name "*.json" -o -name "*.aux.xml" \) | while read -r file; do
-            # Extract date from filename (pattern: YYYYMMDD)
+          while IFS= read -r file; do
             filename=$(basename "$file")
             if [[ $filename =~ ([0-9]{8}) ]]; then
               file_date="${BASH_REMATCH[1]}"
               if [[ $file_date -le $CUTOFF_DATE ]]; then
                 echo "Deleting old file: $file (date: $file_date, cutoff: $CUTOFF_DATE)"
-                rm -f "$file"
-                ((DELETED_COUNT++))
+                rm -f "$file" || true
+                DELETED_COUNT=$((DELETED_COUNT+1))
               else
                 echo "Keeping file: $file (date: $file_date)"
               fi
             else
-              # For files without date pattern (like README.md), keep them
               echo "Keeping file without date pattern: $file"
             fi
-          done
+          done < <(find processed-data/ -type f \( -name "*.png" -o -name "*.json" -o -name "*.aux.xml" \))
           
-          # Clean up temporary raw data (always delete these)
           if [ -d "raw-data" ]; then
             echo "Cleaning up raw-data directory..."
             rm -rf raw-data/
             echo "Raw data directory removed"
           fi
           
-          # Show remaining files after cleanup
           echo "Files after cleanup:"
           find processed-data/ -type f | sort
-          
           echo "Cleanup completed. Total files deleted: $DELETED_COUNT"
 
       - name: Commit and push processed data
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          
-          # Add processed files
           git add processed-data/
           
-          # Check if there are changes to commit
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
@@ -242,7 +201,6 @@ jobs:
 
       - name: Commit cleanup changes
         run: |
-          # Check if cleanup resulted in file deletions that need to be committed
           if ! git diff --exit-code processed-data/; then
             echo "Committing cleanup changes..."
             git config --local user.email "action@github.com"
