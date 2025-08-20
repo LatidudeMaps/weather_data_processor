@@ -21,140 +21,257 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gdal-bin python3-gdal curl jq
+          sudo apt-get install -y gdal-bin python3-gdal curl jq python3-pip
+          pip3 install requests numpy
           gdalinfo --version
           
       - name: Get current GFS run info
         id: gfs-info
         run: |
-          CURRENT_HOUR=$(date -u +%H)
-          if [ $CURRENT_HOUR -ge 21 ]; then
-            GFS_RUN="18"
-            GFS_DATE=$(date -u +%Y%m%d)
-          elif [ $CURRENT_HOUR -ge 15 ]; then
-            GFS_RUN="12"
-            GFS_DATE=$(date -u +%Y%m%d)
-          elif [ $CURRENT_HOUR -ge 9 ]; then
-            GFS_RUN="06"
-            GFS_DATE=$(date -u +%Y%m%d)
-          elif [ $CURRENT_HOUR -ge 3 ]; then
-            GFS_RUN="00"
-            GFS_DATE=$(date -u +%Y%m%d)
+          #!/bin/bash
+          # Determine current GFS run date and time with fallback mechanism
+          
+          # Get current UTC time
+          now=$(date -u +"%Y%m%d %H")
+          current_date=$(echo $now | cut -d' ' -f1)
+          current_hour=$(echo $now | cut -d' ' -f2 | sed 's/^0//')
+          
+          # Determine target run based on current hour
+          if [ $current_hour -ge 18 ]; then
+            runs="18 12 06 00"
+            target_date=$current_date
+          elif [ $current_hour -ge 12 ]; then
+            runs="12 06 00 18"  
+            target_date=$current_date
+          elif [ $current_hour -ge 6 ]; then
+            runs="06 00 18 12"
+            target_date=$current_date
           else
-            GFS_RUN="18"
-            GFS_DATE=$(date -u -d "yesterday" +%Y%m%d)
+            runs="00 18 12 06"
+            target_date=$current_date
           fi
-          echo "gfs_date=$GFS_DATE" >> $GITHUB_OUTPUT
-          echo "gfs_run=$GFS_RUN" >> $GITHUB_OUTPUT
+          
+          # Try current date cycles, then previous day
+          dates=($target_date $(date -u -d "$target_date - 1 day" +"%Y%m%d"))
+          
+          for date in "${dates[@]}"; do
+            for run in $runs; do
+              # Format run with leading zero
+              run_formatted=$(printf "%02d" $run)
+              
+              # Test URL availability
+              test_url="https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?leftlon=0&rightlon=1&toplat=1&bottomlat=0&dir=/gfs.${date}/${run_formatted}/atmos&file=gfs.t${run_formatted}z.pgrb2.0p25.f000&lev_2_m_above_ground=on&var_TMP=on"
+              
+              if curl -s --head "$test_url" | head -n 1 | grep -q "200 OK"; then
+                echo "gfs_date=${date}" >> $GITHUB_OUTPUT
+                echo "gfs_run=${run_formatted}" >> $GITHUB_OUTPUT
+                echo "Found available GFS cycle: ${date} ${run_formatted}Z"
+                exit 0
+              fi
+              
+              echo "Cycle ${date} ${run_formatted}Z not available, trying next..."
+            done
+          done
+          
+          echo "Error: No GFS cycles available"
+          exit 1
 
       - name: Download GFS GRIB data
         run: |
-          GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
-          GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
-          mkdir -p raw-data
-          cd raw-data
+          #!/bin/bash
+          set -e
           
-          download_with_fallback() {
-            local var_name=$1
-            local lev_name=$2
-            local output_file=$3
-            local current_date=$GFS_DATE
-            local current_run=$GFS_RUN
-            for attempt in 1 2 3; do
-              if curl -f -o "$output_file" \
-                "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${current_run}z.pgrb2.0p25.f000&var_${var_name}=on&lev_${lev_name}=on&dir=%2Fgfs.${current_date}%2F${current_run}%2Fatmos"; then
-                return 0
-              fi
-              if [ "$current_run" = "18" ]; then
-                current_run="12"
-              elif [ "$current_run" = "12" ]; then
-                current_run="06"
-              elif [ "$current_run" = "06" ]; then
-                current_run="00"
-              else
-                current_date=$(date -u -d "${current_date:0:4}-${current_date:4:2}-${current_date:6:2} - 1 day" +%Y%m%d)
-                current_run="18"
-              fi
-            done
-            return 1
+          gfs_date="${{ steps.gfs-info.outputs.gfs_date }}"
+          gfs_run="${{ steps.gfs-info.outputs.gfs_run }}"
+          
+          echo "Downloading GFS data for ${gfs_date} ${gfs_run}Z"
+          
+          base_url="https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
+          common_params="leftlon=0&rightlon=360&toplat=90&bottomlat=-90&dir=/gfs.${gfs_date}/${gfs_run}/atmos&file=gfs.t${gfs_run}z.pgrb2.0p25.f000"
+          
+          mkdir -p gribs
+          
+          # Download wind components (10m)
+          echo "Downloading wind U component..."
+          curl -s "${base_url}?${common_params}&lev_10_m_above_ground=on&var_UGRD=on" -o gribs/wind_u_current.grib
+          
+          echo "Downloading wind V component..."
+          curl -s "${base_url}?${common_params}&lev_10_m_above_ground=on&var_VGRD=on" -o gribs/wind_v_current.grib
+          
+          # Download temperature (2m) - NOTE: Data is in Celsius
+          echo "Downloading temperature..."
+          curl -s "${base_url}?${common_params}&lev_2_m_above_ground=on&var_TMP=on" -o gribs/temp_current.grib
+          
+          # Download cloud cover (entire atmosphere)
+          echo "Downloading cloud cover..."
+          curl -s "${base_url}?${common_params}&lev_entire_atmosphere=on&var_TCDC=on" -o gribs/cloud_current.grib
+          
+          # Download reflectivity (entire atmosphere)
+          echo "Downloading reflectivity..."
+          curl -s "${base_url}?${common_params}&lev_entire_atmosphere=on&var_REFC=on" -o gribs/reflectivity_current.grib
+          
+          # Verify downloads
+          for file in gribs/*.grib; do
+            if [ ! -s "$file" ]; then
+              echo "Error: $file is empty or missing"
+              exit 1
+            fi
+            echo "✓ $(basename $file): $(stat -c%s $file) bytes"
+          done
+
+      - name: Compute data statistics and ranges
+        id: stats
+        run: |
+          #!/bin/bash
+          set -e
+          
+          echo "Computing statistics for each weather parameter..."
+          
+          # Function to get min/max from gdalinfo
+          get_minmax() {
+            local file="$1"
+            gdalinfo -stats "$file" | grep -E "STATISTICS_(MINIMUM|MAXIMUM)" | \
+            sed -E 's/.*STATISTICS_(MINIMUM|MAXIMUM)=([0-9.-]+).*/\2/' | \
+            tr '\n' ' ' | awk '{print $1, $2}'
           }
           
-          # Wind
-          download_with_fallback "UGRD" "10_m_above_ground" "wind_u_current.grib"
-          download_with_fallback "VGRD" "10_m_above_ground" "wind_v_current.grib"
-          # Cloud
-          download_with_fallback "TCDC" "entire_atmosphere" "cloud_current.grib"
-          # Temperature
-          download_with_fallback "TMP" "2_m_above_ground" "temp_current.grib"
-          # Reflectivity
-          download_with_fallback "REFC" "entire_atmosphere" "reflectivity_current.grib"
+          # Get statistics for each parameter
+          wind_u_stats=($(get_minmax "gribs/wind_u_current.grib"))
+          wind_v_stats=($(get_minmax "gribs/wind_v_current.grib"))
+          temp_stats=($(get_minmax "gribs/temp_current.grib"))
+          cloud_stats=($(get_minmax "gribs/cloud_current.grib"))
+          refl_stats=($(get_minmax "gribs/reflectivity_current.grib"))
+          
+          # Wind: use combined min/max of both components for consistent scaling
+          wind_min=$(echo "${wind_u_stats[0]} ${wind_v_stats[0]}" | awk '{print ($1 < $2) ? $1 : $2}')
+          wind_max=$(echo "${wind_u_stats[1]} ${wind_v_stats[1]}" | awk '{print ($1 > $2) ? $1 : $2}')
+          
+          # Set output variables
+          echo "wind_min=${wind_min}" >> $GITHUB_OUTPUT
+          echo "wind_max=${wind_max}" >> $GITHUB_OUTPUT
+          echo "temp_min=${temp_stats[0]}" >> $GITHUB_OUTPUT
+          echo "temp_max=${temp_stats[1]}" >> $GITHUB_OUTPUT
+          echo "cloud_min=${cloud_stats[0]}" >> $GITHUB_OUTPUT
+          echo "cloud_max=${cloud_stats[1]}" >> $GITHUB_OUTPUT
+          echo "refl_min=${refl_stats[0]}" >> $GITHUB_OUTPUT
+          echo "refl_max=${refl_stats[1]}" >> $GITHUB_OUTPUT
+          
+          # Log the ranges
+          echo "=== DATA RANGES ==="
+          echo "Wind U: ${wind_u_stats[0]} to ${wind_u_stats[1]} m/s"
+          echo "Wind V: ${wind_v_stats[0]} to ${wind_v_stats[1]} m/s"
+          echo "Wind combined: ${wind_min} to ${wind_max} m/s"
+          echo "Temperature: ${temp_stats[0]} to ${temp_stats[1]} °C"
+          echo "Cloud Cover: ${cloud_stats[0]} to ${cloud_stats[1]} %"
+          echo "Reflectivity: ${refl_stats[0]} to ${refl_stats[1]} dBZ"
 
       - name: Process GRIB to WeatherLayers format
         run: |
-          cd raw-data
-          GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
-          GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
+          #!/bin/bash
+          set -e
           
-          # Wind
-          if [[ -f "wind_u_current.grib" && -f "wind_v_current.grib" ]]; then
-            gdalbuildvrt -separate "wind_current.vrt" "wind_u_current.grib" "wind_v_current.grib" "wind_v_current.grib"
-            gdal_translate -ot Byte -scale -30 30 0 255 -of PNG "wind_current.vrt" "../processed-data/wind_${GFS_DATE}_${GFS_RUN}z.png"
-          fi
+          gfs_date="${{ steps.gfs-info.outputs.gfs_date }}"
+          gfs_run="${{ steps.gfs-info.outputs.gfs_run }}"
           
-          # Cloud
-          if [[ -f "cloud_current.grib" ]]; then
-            gdal_translate -ot Byte -scale 0 100 0 255 -of PNG "cloud_current.grib" "../processed-data/cloud_${GFS_DATE}_${GFS_RUN}z.png"
-          fi
+          mkdir -p processed
           
-          # Temperature
-          if [[ -f "temp_current.grib" ]]; then
-            gdal_translate -ot Byte -scale 0 255 -of PNG "temp_current.grib" "../processed-data/temp_${GFS_DATE}_${GFS_RUN}z.png"
-          fi
+          # Wind processing: Create 3-band VRT (R=U, G=V, B=V) then scale to Byte
+          echo "Processing wind data..."
+          gdalbuildvrt -separate processed/wind_temp.vrt \
+            gribs/wind_u_current.grib \
+            gribs/wind_v_current.grib \
+            gribs/wind_v_current.grib
           
-          # Reflectivity
-          if [[ -f "reflectivity_current.grib" ]]; then
-            gdal_translate -ot Byte -scale 0 255 -of PNG "reflectivity_current.grib" "../processed-data/reflectivity_${GFS_DATE}_${GFS_RUN}z.png"
-          fi
+          gdal_translate -ot Byte \
+            -scale ${{ steps.stats.outputs.wind_min }} ${{ steps.stats.outputs.wind_max }} 0 255 \
+            -of PNG \
+            processed/wind_temp.vrt \
+            processed/wind_${gfs_date}_${gfs_run}z.png
+          rm processed/wind_temp.vrt
+          
+          # Temperature processing: Scale Celsius values to Byte
+          echo "Processing temperature data..."
+          gdal_translate -ot Byte \
+            -scale ${{ steps.stats.outputs.temp_min }} ${{ steps.stats.outputs.temp_max }} 0 255 \
+            -of PNG \
+            gribs/temp_current.grib \
+            processed/temp_${gfs_date}_${gfs_run}z.png
+          
+          # Cloud cover processing: Scale percentage to Byte (use semantic 0-100 range)
+          echo "Processing cloud cover data..."
+          gdal_translate -ot Byte \
+            -scale 0.0 100.0 0 255 \
+            -of PNG \
+            gribs/cloud_current.grib \
+            processed/cloud_${gfs_date}_${gfs_run}z.png
+          
+          # Reflectivity processing: Scale observed range to Byte
+          echo "Processing reflectivity data..."
+          gdal_translate -ot Byte \
+            -scale ${{ steps.stats.outputs.refl_min }} ${{ steps.stats.outputs.refl_max }} 0 255 \
+            -of PNG \
+            gribs/reflectivity_current.grib \
+            processed/reflectivity_${gfs_date}_${gfs_run}z.png
+          
+          # Verify all outputs are Byte format
+          echo "=== OUTPUT VERIFICATION ==="
+          for file in processed/*.png; do
+            info=$(gdalinfo "$file" | grep "Type=")
+            echo "$(basename $file): $info"
+          done
 
       - name: Generate metadata
         run: |
-          GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
-          GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
-          cat > processed-data/metadata_${GFS_DATE}_${GFS_RUN}z.json << EOF
+          #!/bin/bash
+          set -e
+          
+          gfs_date="${{ steps.gfs-info.outputs.gfs_date }}"
+          gfs_run="${{ steps.gfs-info.outputs.gfs_run }}"
+          
+          # Create comprehensive metadata JSON
+          cat > processed/metadata_${gfs_date}_${gfs_run}z.json << EOF
           {
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "gfs_date": "${GFS_DATE}",
-            "gfs_run": "${GFS_RUN}",
-            "forecast_hour": "000",
-            "bounds": [-180, -90, 180, 90],
+            "gfs": {
+              "date": "${gfs_date}",
+              "run": "${gfs_run}",
+              "forecast_hour": "000"
+            },
+            "processing": {
+              "notes": "All outputs scaled to Byte (0-255) using actual min/max from data",
+              "time_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+              "scaling_method": "Linear scaling using gdal_translate -scale with actual data ranges"
+            },
             "layers": {
               "wind": {
-                "file": "wind_${GFS_DATE}_${GFS_RUN}z.png",
-                "type": "vector",
+                "png": "wind_${gfs_date}_${gfs_run}z.png",
+                "format": "Byte",
+                "encoding": "R=UGRD(10m), G=VGRD(10m), B=VGRD(10m)",
+                "input_domain_ms": [${{ steps.stats.outputs.wind_min }}, ${{ steps.stats.outputs.wind_max }}],
                 "units": "m/s",
-                "range": [-30, 30],
-                "encoding": "RG channels, 128=0 m/s, scale 0-255"
-              },
-              "cloud": {
-                "file": "cloud_${GFS_DATE}_${GFS_RUN}z.png",
-                "type": "raster",
-                "units": "%",
-                "range": [0, 100],
-                "encoding": "0=clear sky, 255=overcast"
+                "level": "10m above ground"
               },
               "temperature": {
-                "file": "temp_${GFS_DATE}_${GFS_RUN}z.png",
-                "type": "raster",
+                "png": "temp_${gfs_date}_${gfs_run}z.png",
+                "format": "Byte",
+                "input_domain_celsius": [${{ steps.stats.outputs.temp_min }}, ${{ steps.stats.outputs.temp_max }}],
                 "units": "°C",
-                "range": [-40, 50],
-                "encoding": "scaled 0-255 from -40°C to +50°C"
+                "level": "2m above ground",
+                "note": "GFS temperature data is natively in Celsius"
+              },
+              "cloud": {
+                "png": "cloud_${gfs_date}_${gfs_run}z.png", 
+                "format": "Byte",
+                "input_domain_percent": [0.0, 100.0],
+                "actual_range_percent": [${{ steps.stats.outputs.cloud_min }}, ${{ steps.stats.outputs.cloud_max }}],
+                "units": "%",
+                "level": "entire atmosphere"
               },
               "reflectivity": {
-                "file": "reflectivity_${GFS_DATE}_${GFS_RUN}z.png",
-                "type": "raster",
+                "png": "reflectivity_${gfs_date}_${gfs_run}z.png",
+                "format": "Byte", 
+                "input_domain_dbz": [${{ steps.stats.outputs.refl_min }}, ${{ steps.stats.outputs.refl_max }}],
                 "units": "dBZ",
-                "range": [0, 70],
-                "encoding": "scaled 0-255 from 0–70 dBZ"
+                "level": "entire atmosphere"
               }
             }
           }
@@ -162,29 +279,43 @@ jobs:
 
       - name: Clean up old processed data (keep last 7 days)
         run: |
-          CUTOFF_DATE=$(date -u -d "7 days ago" +%Y%m%d)
-          DELETED_COUNT=0
-          while IFS= read -r file; do
-            filename=$(basename "$file")
-            if [[ $filename =~ ([0-9]{8}) ]]; then
-              file_date="${BASH_REMATCH[1]}"
-              if [[ $file_date -le $CUTOFF_DATE ]]; then
-                rm -f "$file" || true
-                DELETED_COUNT=$((DELETED_COUNT+1))
-              fi
-            fi
-          done < <(find processed-data/ -type f \( -name "*.png" -o -name "*.json" -o -name "*.aux.xml" \))
-          rm -rf raw-data/ || true
-          echo "Cleanup completed. Total files deleted: $DELETED_COUNT"
+          #!/bin/bash
+          # Remove processed data files older than 7 days
+          find processed -name "*.png" -mtime +7 -delete || true
+          find processed -name "*.json" -mtime +7 -delete || true
+          
+          # Clean up temp directories
+          rm -rf gribs
 
       - name: Commit and push processed data
         run: |
+          #!/bin/bash
+          set -e
+          
+          gfs_date="${{ steps.gfs-info.outputs.gfs_date }}"
+          gfs_run="${{ steps.gfs-info.outputs.gfs_run }}"
+          
+          # Configure git
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add processed-data/
+          
+          # Add processed files
+          git add processed/
+          
+          # Check if there are changes to commit
           if git diff --staged --quiet; then
             echo "No changes to commit"
-          else
-            git commit -m "Update weather data: $(date -u +%Y-%m-%d_%H:%M)Z"
-            git push
+            exit 0
           fi
+          
+          # Commit with descriptive message
+          git commit -m "Add weather data for ${gfs_date} ${gfs_run}Z
+
+          🌤️ Generated with [Claude Code](https://claude.ai/code)
+          
+          Co-Authored-By: Claude <noreply@anthropic.com>"
+          
+          # Push changes
+          git push
+          
+          echo "✅ Successfully processed and committed weather data for ${gfs_date} ${gfs_run}Z"
