@@ -138,11 +138,11 @@ jobs:
           }
           
           # Get statistics for each parameter
-          wind_u_stats=($(get_minmax "gribs/wind_u_current.grib"))
-          wind_v_stats=($(get_minmax "gribs/wind_v_current.grib"))
-          temp_stats=($(get_minmax "gribs/temp_current.grib"))
-          cloud_stats=($(get_minmax "gribs/cloud_current.grib"))
-          refl_stats=($(get_minmax "gribs/reflectivity_current.grib"))
+          wind_u_stats=($(get_minmax "raw-data/wind_u_current.grib"))
+          wind_v_stats=($(get_minmax "raw-data/wind_v_current.grib"))
+          temp_stats=($(get_minmax "raw-data/temp_current.grib"))
+          cloud_stats=($(get_minmax "raw-data/cloud_current.grib"))
+          refl_stats=($(get_minmax "raw-data/reflectivity_current.grib"))
           
           # Wind: use combined min/max of both components for consistent scaling
           wind_min=$(echo "${wind_u_stats[0]} ${wind_v_stats[0]}" | awk '{print ($1 < $2) ? $1 : $2}')
@@ -180,9 +180,9 @@ jobs:
           # Wind processing: Create 3-band VRT (R=U, G=V, B=V) then scale to Byte
           echo "Processing wind data..."
           gdalbuildvrt -separate processed/wind_temp.vrt \
-            gribs/wind_u_current.grib \
-            gribs/wind_v_current.grib \
-            gribs/wind_v_current.grib
+            raw-data/wind_u_current.grib \
+            raw-data/wind_v_current.grib \
+            raw-data/wind_v_current.grib
           
           gdal_translate -ot Byte \
             -scale ${{ steps.stats.outputs.wind_min }} ${{ steps.stats.outputs.wind_max }} 0 255 \
@@ -196,7 +196,7 @@ jobs:
           gdal_translate -ot Byte \
             -scale ${{ steps.stats.outputs.temp_min }} ${{ steps.stats.outputs.temp_max }} 0 255 \
             -of PNG \
-            gribs/temp_current.grib \
+            raw-data/temp_current.grib \
             processed/temp_${gfs_date}_${gfs_run}z.png
           
           # Cloud cover processing: Scale percentage to Byte (use semantic 0-100 range)
@@ -204,7 +204,7 @@ jobs:
           gdal_translate -ot Byte \
             -scale 0.0 100.0 0 255 \
             -of PNG \
-            gribs/cloud_current.grib \
+            raw-data/cloud_current.grib \
             processed/cloud_${gfs_date}_${gfs_run}z.png
           
           # Reflectivity processing: Scale observed range to Byte
@@ -212,7 +212,7 @@ jobs:
           gdal_translate -ot Byte \
             -scale ${{ steps.stats.outputs.refl_min }} ${{ steps.stats.outputs.refl_max }} 0 255 \
             -of PNG \
-            gribs/reflectivity_current.grib \
+            raw-data/reflectivity_current.grib \
             processed/reflectivity_${gfs_date}_${gfs_run}z.png
           
           # Verify all outputs are Byte format
@@ -287,7 +287,7 @@ jobs:
           find processed -name "*.json" -mtime +7 -delete || true
           
           # Clean up temp directories
-          rm -rf gribs
+          rm -rf raw-data
 
       - name: Commit and push processed data
         run: |
