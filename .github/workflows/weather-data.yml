@@ -28,96 +28,98 @@ jobs:
       - name: Get current GFS run info
         id: gfs-info
         run: |
-          #!/bin/bash
-          # Determine current GFS run date and time with fallback mechanism
+          # Get current date and determine the latest available GFS run
+          # GFS data is usually available 3-4 hours after model run time
+          CURRENT_HOUR=$(date -u +%H)
           
-          # Get current UTC time
-          now=$(date -u +"%Y%m%d %H")
-          current_date=$(echo $now | cut -d' ' -f1)
-          current_hour=$(echo $now | cut -d' ' -f2 | sed 's/^0//')
-          
-          # Determine target run based on current hour
-          if [ $current_hour -ge 18 ]; then
-            runs="18 12 06 00"
-            target_date=$current_date
-          elif [ $current_hour -ge 12 ]; then
-            runs="12 06 00 18"  
-            target_date=$current_date
-          elif [ $current_hour -ge 6 ]; then
-            runs="06 00 18 12"
-            target_date=$current_date
+          # Account for GFS data availability delay (usually 3-4 hours)
+          if [ $CURRENT_HOUR -ge 21 ]; then
+            GFS_RUN="18"
+            GFS_DATE=$(date -u +%Y%m%d)
+          elif [ $CURRENT_HOUR -ge 15 ]; then
+            GFS_RUN="12"
+            GFS_DATE=$(date -u +%Y%m%d)
+          elif [ $CURRENT_HOUR -ge 9 ]; then
+            GFS_RUN="06"
+            GFS_DATE=$(date -u +%Y%m%d)
+          elif [ $CURRENT_HOUR -ge 3 ]; then
+            GFS_RUN="00"
+            GFS_DATE=$(date -u +%Y%m%d)
           else
-            runs="00 18 12 06"
-            target_date=$current_date
+            # Use previous day's 18Z run
+            GFS_RUN="18"
+            GFS_DATE=$(date -u -d "yesterday" +%Y%m%d)
           fi
           
-          # Try current date cycles, then previous day
-          dates=($target_date $(date -u -d "$target_date - 1 day" +"%Y%m%d"))
-          
-          for date in "${dates[@]}"; do
-            for run in $runs; do
-              # Format run with leading zero
-              run_formatted=$(printf "%02d" $run)
-              
-              # Test URL availability
-              test_url="https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?leftlon=0&rightlon=1&toplat=1&bottomlat=0&dir=/gfs.${date}/${run_formatted}/atmos&file=gfs.t${run_formatted}z.pgrb2.0p25.f000&lev_2_m_above_ground=on&var_TMP=on"
-              
-              if curl -s --head "$test_url" | head -n 1 | grep -q "200 OK"; then
-                echo "gfs_date=${date}" >> $GITHUB_OUTPUT
-                echo "gfs_run=${run_formatted}" >> $GITHUB_OUTPUT
-                echo "Found available GFS cycle: ${date} ${run_formatted}Z"
-                exit 0
-              fi
-              
-              echo "Cycle ${date} ${run_formatted}Z not available, trying next..."
-            done
-          done
-          
-          echo "Error: No GFS cycles available"
-          exit 1
+          echo "gfs_date=$GFS_DATE" >> $GITHUB_OUTPUT
+          echo "gfs_run=$GFS_RUN" >> $GITHUB_OUTPUT
+          echo "Processing GFS data for date: $GFS_DATE, run: ${GFS_RUN}Z"
 
       - name: Download GFS GRIB data
         run: |
-          #!/bin/bash
-          set -e
+          GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
+          GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
           
-          gfs_date="${{ steps.gfs-info.outputs.gfs_date }}"
-          gfs_run="${{ steps.gfs-info.outputs.gfs_run }}"
+          # Create directory for raw data
+          mkdir -p raw-data
+          cd raw-data
           
-          echo "Downloading GFS data for ${gfs_date} ${gfs_run}Z"
+          echo "Downloading current GFS data for ${GFS_DATE}/${GFS_RUN}Z"
           
-          base_url="https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
-          common_params="leftlon=0&rightlon=360&toplat=90&bottomlat=-90&dir=/gfs.${gfs_date}/${gfs_run}/atmos&file=gfs.t${gfs_run}z.pgrb2.0p25.f000"
+          # Function to try downloading with fallback to previous runs
+          download_with_fallback() {
+            local var_name=$1
+            local lev_name=$2
+            local output_file=$3
+            local current_date=$GFS_DATE
+            local current_run=$GFS_RUN
+            
+            # Try current run first
+            for attempt in 1 2 3; do
+              echo "Attempt $attempt: Downloading ${var_name} for ${current_date}/${current_run}Z..."
+              if curl -f -o "$output_file" \
+                "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${current_run}z.pgrb2.0p25.f000&var_${var_name}=on&lev_${lev_name}=on&dir=%2Fgfs.${current_date}%2F${current_run}%2Fatmos"; then
+                echo "Successfully downloaded ${var_name}"
+                return 0
+              fi
+              
+              # Fallback to previous run
+              if [ "$current_run" = "18" ]; then
+                current_run="12"
+              elif [ "$current_run" = "12" ]; then
+                current_run="06"
+              elif [ "$current_run" = "06" ]; then
+                current_run="00"
+              else
+                # Go to previous day's 18Z
+                current_date=$(date -u -d "${current_date:0:4}-${current_date:4:2}-${current_date:6:2} - 1 day" +%Y%m%d)
+                current_run="18"
+              fi
+              echo "Trying fallback: ${current_date}/${current_run}Z"
+            done
+            
+            echo "Failed to download ${var_name} after all attempts"
+            return 1
+          }
           
-          mkdir -p gribs
+          # Download U component of wind at 10m above ground
+          download_with_fallback "UGRD" "10_m_above_ground" "wind_u_current.grib"
           
-          # Download wind components (10m)
-          echo "Downloading wind U component..."
-          curl -s "${base_url}?${common_params}&lev_10_m_above_ground=on&var_UGRD=on" -o gribs/wind_u_current.grib
+          # Download V component of wind at 10m above ground  
+          download_with_fallback "VGRD" "10_m_above_ground" "wind_v_current.grib"
           
-          echo "Downloading wind V component..."
-          curl -s "${base_url}?${common_params}&lev_10_m_above_ground=on&var_VGRD=on" -o gribs/wind_v_current.grib
+          # Download temperature at 2m above ground
+          download_with_fallback "TMP" "2_m_above_ground" "temp_current.grib"
           
-          # Download temperature (2m) - NOTE: Data is in Celsius
-          echo "Downloading temperature..."
-          curl -s "${base_url}?${common_params}&lev_2_m_above_ground=on&var_TMP=on" -o gribs/temp_current.grib
+          # Download total cloud cover
+          download_with_fallback "TCDC" "entire_atmosphere" "cloud_current.grib"
           
-          # Download cloud cover (entire atmosphere)
-          echo "Downloading cloud cover..."
-          curl -s "${base_url}?${common_params}&lev_entire_atmosphere=on&var_TCDC=on" -o gribs/cloud_current.grib
+          # Download composite reflectivity
+          download_with_fallback "REFC" "entire_atmosphere" "reflectivity_current.grib"
           
-          # Download reflectivity (entire atmosphere)
-          echo "Downloading reflectivity..."
-          curl -s "${base_url}?${common_params}&lev_entire_atmosphere=on&var_REFC=on" -o gribs/reflectivity_current.grib
-          
-          # Verify downloads
-          for file in gribs/*.grib; do
-            if [ ! -s "$file" ]; then
-              echo "Error: $file is empty or missing"
-              exit 1
-            fi
-            echo "✓ $(basename $file): $(stat -c%s $file) bytes"
-          done
+          # List downloaded files
+          echo "Files downloaded:"
+          ls -la *.grib 2>/dev/null || echo "No GRIB files downloaded"
 
       - name: Compute data statistics and ranges
         id: stats
