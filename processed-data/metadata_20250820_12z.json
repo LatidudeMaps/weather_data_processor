@@ -6,7 +6,7 @@
   },
   "processing": {
     "notes": "All outputs scaled to Byte (0-255) using actual min/max from data",
-    "time_utc": "2025-08-20T16:56:16Z",
+    "time_utc": "2025-08-20T18:42:01Z",
     "scaling_method": "Linear scaling using gdal_translate -scale with actual data ranges"
   },
   "layers": {
