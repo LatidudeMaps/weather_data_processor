@@ -283,8 +283,8 @@ jobs:
         run: |
           #!/bin/bash
           # Remove processed data files older than 7 days
-          find processed -name "*.png" -mtime +7 -delete || true
-          find processed -name "*.json" -mtime +7 -delete || true
+          find processed-data -name "*.png" -mtime +7 -delete || true
+          find processed-data -name "*.json" -mtime +7 -delete || true
           
           # Clean up temp directories
           rm -rf raw-data
@@ -302,7 +302,7 @@ jobs:
           git config --local user.name "GitHub Action"
           
           # Add processed files
-          git add processed/
+          git add processed-data/
           
           # Check if there are changes to commit
           if git diff --staged --quiet; then
