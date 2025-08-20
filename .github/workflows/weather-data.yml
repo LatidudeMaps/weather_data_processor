@@ -175,11 +175,11 @@ jobs:
           gfs_date="${{ steps.gfs-info.outputs.gfs_date }}"
           gfs_run="${{ steps.gfs-info.outputs.gfs_run }}"
           
-          mkdir -p processed
+          mkdir -p processed-data
           
           # Wind processing: Create 3-band VRT (R=U, G=V, B=V) then scale to Byte
           echo "Processing wind data..."
-          gdalbuildvrt -separate processed/wind_temp.vrt \
+          gdalbuildvrt -separate processed-data/wind_temp.vrt \
             raw-data/wind_u_current.grib \
             raw-data/wind_v_current.grib \
             raw-data/wind_v_current.grib
@@ -187,9 +187,9 @@ jobs:
           gdal_translate -ot Byte \
             -scale ${{ steps.stats.outputs.wind_min }} ${{ steps.stats.outputs.wind_max }} 0 255 \
             -of PNG \
-            processed/wind_temp.vrt \
-            processed/wind_${gfs_date}_${gfs_run}z.png
-          rm processed/wind_temp.vrt
+            processed-data/wind_temp.vrt \
+            processed-data/wind_${gfs_date}_${gfs_run}z.png
+          rm processed-data/wind_temp.vrt
           
           # Temperature processing: Scale Celsius values to Byte
           echo "Processing temperature data..."
@@ -197,7 +197,7 @@ jobs:
             -scale ${{ steps.stats.outputs.temp_min }} ${{ steps.stats.outputs.temp_max }} 0 255 \
             -of PNG \
             raw-data/temp_current.grib \
-            processed/temp_${gfs_date}_${gfs_run}z.png
+            processed-data/temp_${gfs_date}_${gfs_run}z.png
           
           # Cloud cover processing: Scale percentage to Byte (use semantic 0-100 range)
           echo "Processing cloud cover data..."
@@ -205,7 +205,7 @@ jobs:
             -scale 0.0 100.0 0 255 \
             -of PNG \
             raw-data/cloud_current.grib \
-            processed/cloud_${gfs_date}_${gfs_run}z.png
+            processed-data/cloud_${gfs_date}_${gfs_run}z.png
           
           # Reflectivity processing: Scale observed range to Byte
           echo "Processing reflectivity data..."
@@ -213,11 +213,11 @@ jobs:
             -scale ${{ steps.stats.outputs.refl_min }} ${{ steps.stats.outputs.refl_max }} 0 255 \
             -of PNG \
             raw-data/reflectivity_current.grib \
-            processed/reflectivity_${gfs_date}_${gfs_run}z.png
+            processed-data/reflectivity_${gfs_date}_${gfs_run}z.png
           
           # Verify all outputs are Byte format
           echo "=== OUTPUT VERIFICATION ==="
-          for file in processed/*.png; do
+          for file in processed-data/*.png; do
             info=$(gdalinfo "$file" | grep "Type=")
             echo "$(basename $file): $info"
           done
@@ -231,7 +231,7 @@ jobs:
           gfs_run="${{ steps.gfs-info.outputs.gfs_run }}"
           
           # Create comprehensive metadata JSON
-          cat > processed/metadata_${gfs_date}_${gfs_run}z.json << EOF
+          cat > processed-data/metadata_${gfs_date}_${gfs_run}z.json << EOF
           {
             "gfs": {
               "date": "${gfs_date}",
