@@ -1,0 +1,37 @@
+{
+  "timestamp": "2025-08-20T06:43:10Z",
+  "gfs_date": "20250820",
+  "gfs_run": "00",
+  "forecast_hour": "000",
+  "bounds": [-180, -90, 180, 90],
+  "layers": {
+    "wind": {
+      "file": "wind_20250820_00z.png",
+      "type": "vector",
+      "units": "m/s",
+      "range": [-30, 30],
+      "encoding": "RG channels, 128=0 m/s, scale 0-255"
+    },
+    "cloud": {
+      "file": "cloud_20250820_00z.png",
+      "type": "raster",
+      "units": "%",
+      "range": [0, 100],
+      "encoding": "0=clear sky, 255=overcast"
+    },
+    "temperature": {
+      "file": "temp_20250820_00z.png",
+      "type": "raster",
+      "units": "°C",
+      "range": [-40, 50],
+      "encoding": "scaled 0-255 from -40°C to +50°C"
+    },
+    "reflectivity": {
+      "file": "reflectivity_20250820_00z.png",
+      "type": "raster",
+      "units": "dBZ",
+      "range": [0, 70],
+      "encoding": "scaled 0-255 from 0–70 dBZ"
+    }
+  }
+}
