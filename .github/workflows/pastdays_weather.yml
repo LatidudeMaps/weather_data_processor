@@ -1,12 +1,12 @@
-name: Process Historical Weather Data
+name: Historical Weather Data
 
 on:
   workflow_dispatch:
     inputs:
       days_back:
-        description: 'Number of days back to process (default: 7)'
-        required: false
-        default: '7'
+        description: "How many past days of data to fetch"
+        required: true
+        default: "3"
 
 permissions:
   contents: write
@@ -24,65 +24,87 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gdal-bin python3-gdal curl jq wget
-          gdalinfo --version
+          sudo apt-get install -y gdal-bin python3-gdal curl jq
 
-      - name: Process Historical Weather Data
+      - name: Process historical weather data
         run: |
           #!/bin/bash
           set -euo pipefail
 
-          DAYS_BACK="${{ github.event.inputs.days_back }}"
-          echo "Processing weather data for the past $DAYS_BACK days..."
+          DAYS_BACK=${{ github.event.inputs.days_back }}
+          NOW_TS=$(date -u +%s)
 
+          echo "Processing weather data for the past $DAYS_BACK days..."
           mkdir -p raw-data processed-data
 
-          for ((i=0; i<${DAYS_BACK}; i++)); do
-            gfs_date=$(date -u -d "$i day ago" +%Y%m%d)
+          for offset in $(seq 0 $((DAYS_BACK-1))); do
+            gfs_date=$(date -u -d "-$offset day" +%Y%m%d)
+
             for gfs_run in 00 06 12 18; do
-              echo "Processing $gfs_date $gfs_run Z run..."
+              run_time="${gfs_date} ${gfs_run}:00"
+              run_ts=$(date -u -d "$run_time" +%s)
 
-              # Wind U
-              wget -q "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${gfs_run}z.pgrb2.0p25.f000&lev_10_m_above_ground=on&var_UGRD=on&leftlon=0&rightlon=360&toplat=90&bottomlat=-90&dir=%2Fgfs.${gfs_date}%2F${gfs_run}%2Fatmos" \
-                -O "raw-data/wind_u_${gfs_date}_${gfs_run}z.grib" || true
+              # Skip if run is less than 5h old
+              if (( NOW_TS - run_ts < 18000 )); then
+                echo "Skipping ${gfs_date} ${gfs_run}Z (not available yet)"
+                continue
+              fi
 
-              # Wind V
-              wget -q "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${gfs_run}z.pgrb2.0p25.f000&lev_10_m_above_ground=on&var_VGRD=on&leftlon=0&rightlon=360&toplat=90&bottomlat=-90&dir=%2Fgfs.${gfs_date}%2F${gfs_run}%2Fatmos" \
-                -O "raw-data/wind_v_${gfs_date}_${gfs_run}z.grib" || true
+              echo "Processing ${gfs_date} ${gfs_run}Z run..."
 
-              # Cloud Cover
-              wget -q "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${gfs_run}z.pgrb2.0p25.f000&lev_entire_atmosphere=on&var_TCDC=on&leftlon=0&rightlon=360&toplat=90&bottomlat=-90&dir=%2Fgfs.${gfs_date}%2F${gfs_run}%2Fatmos" \
-                -O "raw-data/cloud_${gfs_date}_${gfs_run}z.grib" || true
-
-              # Temperature (2m)
-              wget -q "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${gfs_run}z.pgrb2.0p25.f000&lev_2_m_above_ground=on&var_TMP=on&leftlon=0&rightlon=360&toplat=90&bottomlat=-90&dir=%2Fgfs.${gfs_date}%2F${gfs_run}%2Fatmos" \
-                -O "raw-data/temp_${gfs_date}_${gfs_run}z.grib" || true
-
-              # Reflectivity
-              wget -q "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${gfs_run}z.pgrb2.0p25.f000&lev_entire_atmosphere=on&var_REFC=on&leftlon=0&rightlon=360&toplat=90&bottomlat=-90&dir=%2Fgfs.${gfs_date}%2F${gfs_run}%2Fatmos" \
-                -O "raw-data/reflectivity_${gfs_date}_${gfs_run}z.grib" || true
-
-              # Process data
               cd raw-data
-              if [[ -f "wind_u_${gfs_date}_${gfs_run}z.grib" && -f "wind_v_${gfs_date}_${gfs_run}z.grib" ]]; then
-                gdalbuildvrt -separate "wind_${gfs_date}_${gfs_run}z.vrt" "wind_u_${gfs_date}_${gfs_run}z.grib" "wind_v_${gfs_date}_${gfs_run}z.grib" "wind_v_${gfs_date}_${gfs_run}z.grib"
-                gdal_translate -ot Byte -scale -30 30 0 255 -of PNG "wind_${gfs_date}_${gfs_run}z.vrt" "../processed-data/wind_${gfs_date}_${gfs_run}z.png"
-              fi
 
-              if [[ -f "cloud_${gfs_date}_${gfs_run}z.grib" ]]; then
-                gdal_translate -ot Byte -scale 0 100 0 255 -of PNG "cloud_${gfs_date}_${gfs_run}z.grib" "../processed-data/cloud_${gfs_date}_${gfs_run}z.png"
-              fi
+              # Helper to download with check
+              download_grib() {
+                local var=$1
+                local lev=$2
+                local outfile=$3
+                local url="https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${gfs_run}z.pgrb2.0p25.f000&var_${var}=on&lev_${lev}=on&dir=%2Fgfs.${gfs_date}%2F${gfs_run}%2Fatmos"
+                curl -s -f -o "$outfile" "$url" || true
+                if [[ ! -s "$outfile" ]]; then
+                  echo "Failed to fetch $outfile"
+                  rm -f "$outfile"
+                fi
+              }
 
-              if [[ -f "temp_${gfs_date}_${gfs_run}z.grib" ]]; then
-                gdal_translate -ot Byte -scale 213.15 325.15 0 255 -of PNG "temp_${gfs_date}_${gfs_run}z.grib" "../processed-data/temp_${gfs_date}_${gfs_run}z.png"
-              fi
+              # Download datasets
+              download_grib "UGRD" "10_m_above_ground" "wind_u_${gfs_date}_${gfs_run}z.grib"
+              download_grib "VGRD" "10_m_above_ground" "wind_v_${gfs_date}_${gfs_run}z.grib"
+              download_grib "TCDC" "entire_atmosphere" "cloud_${gfs_date}_${gfs_run}z.grib"
+              download_grib "TMP" "2_m_above_ground" "temp_${gfs_date}_${gfs_run}z.grib"
+              download_grib "REFC" "entire_atmosphere" "reflectivity_${gfs_date}_${gfs_run}z.grib"
 
-              if [[ -f "reflectivity_${gfs_date}_${gfs_run}z.grib" ]]; then
-                gdal_translate -ot Byte -scale 0 70 0 255 -of PNG "reflectivity_${gfs_date}_${gfs_run}z.grib" "../processed-data/reflectivity_${gfs_date}_${gfs_run}z.png"
-              fi
-
-              # Back to repo root
               cd ..
+
+              # Process to PNG
+              if [[ -s raw-data/wind_u_${gfs_date}_${gfs_run}z.grib && -s raw-data/wind_v_${gfs_date}_${gfs_run}z.grib ]]; then
+                gdalbuildvrt -separate "raw-data/wind_${gfs_date}_${gfs_run}z.vrt" \
+                  "raw-data/wind_u_${gfs_date}_${gfs_run}z.grib" \
+                  "raw-data/wind_v_${gfs_date}_${gfs_run}z.grib" \
+                  "raw-data/wind_v_${gfs_date}_${gfs_run}z.grib"
+                gdal_translate -ot Byte -scale -128 127 0 255 --config GRIB_NORMALIZE_UNITS=NO -of PNG \
+                  "raw-data/wind_${gfs_date}_${gfs_run}z.vrt" \
+                  "processed-data/wind_${gfs_date}_${gfs_run}z.png"
+              fi
+
+              if [[ -s raw-data/cloud_${gfs_date}_${gfs_run}z.grib ]]; then
+                gdal_translate -ot Byte -scale 0 100 0 255 -of PNG \
+                  "raw-data/cloud_${gfs_date}_${gfs_run}z.grib" \
+                  "processed-data/cloud_${gfs_date}_${gfs_run}z.png"
+              fi
+
+              if [[ -s raw-data/temp_${gfs_date}_${gfs_run}z.grib ]]; then
+                gdal_translate -ot Byte -scale 213.15 325.15 0 255 -of PNG \
+                  "raw-data/temp_${gfs_date}_${gfs_run}z.grib" \
+                  "processed-data/temp_${gfs_date}_${gfs_run}z.png"
+              fi
+
+              if [[ -s raw-data/reflectivity_${gfs_date}_${gfs_run}z.grib ]]; then
+                gdal_translate -ot Byte -scale 0 60 0 255 -of PNG \
+                  "raw-data/reflectivity_${gfs_date}_${gfs_run}z.grib" \
+                  "processed-data/reflectivity_${gfs_date}_${gfs_run}z.png"
+              fi
+
             done
           done
 
@@ -91,9 +113,9 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add processed-data/
-          if [ -n "$(git diff --staged)" ]; then
-            git commit -m "Add historical weather data for past ${{ github.event.inputs.days_back }} days"
-            git push
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
           else
-            echo "No new data to commit"
+            git commit -m "Update historical weather data: $(date -u +%Y-%m-%d_%H:%M)Z"
+            git push
           fi
