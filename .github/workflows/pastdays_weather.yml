@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gdal-bin python3-gdal python3-numpy curl jq
+          sudo apt-get install -y gdal-bin python3-gdal curl jq
 
       - name: Process historical weather data
         run: |
@@ -78,44 +78,23 @@ jobs:
 
               # --- Process to PNG (single-line commands to avoid YAML line-continuation pitfalls) ---
 
-              # Wind (Red=U, Green=V, Blue=0, Alpha=255 for proper WebGL visualization)
+              # Wind (WeatherLayers GL format: R=U, G=V, B=V duplicate)
               if [[ -s raw-data/wind_u_${gfs_date}_${gfs_run}z.grib && -s raw-data/wind_v_${gfs_date}_${gfs_run}z.grib ]]; then
-                echo "Creating RGBA wind texture with proper channel mapping..."
+                echo "Processing wind data for WeatherLayers GL..."
                 
-                # Create individual single-band files first
-                gdal_translate -b 1 raw-data/wind_u_${gfs_date}_${gfs_run}z.grib raw-data/u_temp_${gfs_date}_${gfs_run}z.tif
-                gdal_translate -b 1 raw-data/wind_v_${gfs_date}_${gfs_run}z.grib raw-data/v_temp_${gfs_date}_${gfs_run}z.tif
+                # Create VRT with U, V, V structure as per WeatherLayers GL docs
+                gdalbuildvrt -separate raw-data/wind_${gfs_date}_${gfs_run}z.vrt \
+                  raw-data/wind_u_${gfs_date}_${gfs_run}z.grib \
+                  raw-data/wind_v_${gfs_date}_${gfs_run}z.grib \
+                  raw-data/wind_v_${gfs_date}_${gfs_run}z.grib
                 
-                # Create constant zero band for blue channel
-                gdal_calc.py -A raw-data/u_temp_${gfs_date}_${gfs_run}z.tif \
-                  --outfile=raw-data/zero_temp_${gfs_date}_${gfs_run}z.tif \
-                  --calc="0*A" \
-                  --type=Byte
-                
-                # Create constant 255 band for alpha channel
-                gdal_calc.py -A raw-data/u_temp_${gfs_date}_${gfs_run}z.tif \
-                  --outfile=raw-data/alpha_temp_${gfs_date}_${gfs_run}z.tif \
-                  --calc="0*A+255" \
-                  --type=Byte
-                
-                # Build RGBA VRT: Red=U, Green=V, Blue=0, Alpha=255
-                gdalbuildvrt -separate raw-data/wind_rgba_${gfs_date}_${gfs_run}z.vrt \
-                  raw-data/u_temp_${gfs_date}_${gfs_run}z.tif \
-                  raw-data/v_temp_${gfs_date}_${gfs_run}z.tif \
-                  raw-data/zero_temp_${gfs_date}_${gfs_run}z.tif \
-                  raw-data/alpha_temp_${gfs_date}_${gfs_run}z.tif
-                
-                # Convert to PNG with proper RGBA channel mapping
+                # Convert to PNG with WeatherLayers GL recommended scaling
                 gdal_translate -ot Byte -scale -128 127 0 255 -of PNG \
-                  raw-data/wind_rgba_${gfs_date}_${gfs_run}z.vrt \
+                  raw-data/wind_${gfs_date}_${gfs_run}z.vrt \
                   processed-data/wind_${gfs_date}_${gfs_run}z.png
                 
-                # Clean up temporary files
-                rm -f raw-data/u_temp_${gfs_date}_${gfs_run}z.tif \
-                      raw-data/v_temp_${gfs_date}_${gfs_run}z.tif \
-                      raw-data/zero_temp_${gfs_date}_${gfs_run}z.tif \
-                      raw-data/alpha_temp_${gfs_date}_${gfs_run}z.tif \
-                      raw-data/wind_rgba_${gfs_date}_${gfs_run}z.vrt
+                # Clean up VRT
+                rm -f raw-data/wind_${gfs_date}_${gfs_run}z.vrt
               fi
 
               # Cloud cover (%)
