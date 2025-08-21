@@ -1,0 +1,45 @@
+{
+  "gfs": {
+    "date": "20250821",
+    "run": "00",
+    "forecast_hour": "000"
+  },
+  "processing": {
+    "notes": "All outputs scaled to Byte (0-255) using actual min/max from data",
+    "time_utc": "2025-08-21T06:45:49Z",
+    "scaling_method": "Linear scaling using gdal_translate -scale with actual data ranges"
+  },
+  "layers": {
+    "wind": {
+      "png": "wind_20250821_00z.png",
+      "format": "Byte",
+      "encoding": "R=UGRD(10m), G=VGRD(10m), B=VGRD(10m)",
+      "input_domain_ms": [28.816469192505, -32.000511169434],
+      "units": "m/s",
+      "level": "10m above ground"
+    },
+    "temperature": {
+      "png": "temp_20250821_00z.png",
+      "format": "Byte",
+      "input_domain_celsius": [44.787408447266, -65.612600708008],
+      "units": "°C",
+      "level": "2m above ground",
+      "note": "GFS temperature data is natively in Celsius"
+    },
+    "cloud": {
+      "png": "cloud_20250821_00z.png", 
+      "format": "Byte",
+      "input_domain_percent": [0.0, 100.0],
+      "actual_range_percent": [100, 0],
+      "units": "%",
+      "level": "entire atmosphere"
+    },
+    "reflectivity": {
+      "png": "reflectivity_20250821_00z.png",
+      "format": "Byte", 
+      "input_domain_dbz": [51.159992218018, -20.000003814697],
+      "units": "dBZ",
+      "level": "entire atmosphere"
+    }
+  }
+}
