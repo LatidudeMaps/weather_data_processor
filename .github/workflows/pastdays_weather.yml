@@ -105,7 +105,7 @@ jobs:
                 echo "Wind data range: [$overall_min, $overall_max] m/s"
                 
                 # Convert to PNG using actual data range
-                gdal_translate -ot Byte -scale $overall_min $overall_max 0 255 -of PNG \
+                gdal_translate -ot Byte -scale -128 127 0 255 -of PNG \
                   raw-data/wind_${gfs_date}_${gfs_run}z.vrt \
                   processed-data/wind_${gfs_date}_${gfs_run}z.png
                 
