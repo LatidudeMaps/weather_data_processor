@@ -185,7 +185,7 @@ jobs:
             raw-data/wind_v_current.grib
           
           gdal_translate -ot Byte \
-            -scale ${{ steps.stats.outputs.wind_min }} ${{ steps.stats.outputs.wind_max }} 0 255 \
+            -scale -128 127 0 255 \
             -of PNG \
             processed-data/wind_temp.vrt \
             processed-data/wind_${gfs_date}_${gfs_run}z.png
@@ -194,7 +194,8 @@ jobs:
           # Temperature processing: Scale Celsius values to Byte
           echo "Processing temperature data..."
           gdal_translate -ot Byte \
-            -scale ${{ steps.stats.outputs.temp_min }} ${{ steps.stats.outputs.temp_max }} 0 255 \
+            -scale 213.15 325.15 0 255 \
+            --config GRIB_NORMALIZE_UNITS=NO \
             -of PNG \
             raw-data/temp_current.grib \
             processed-data/temp_${gfs_date}_${gfs_run}z.png
@@ -202,7 +203,7 @@ jobs:
           # Cloud cover processing: Scale percentage to Byte (use semantic 0-100 range)
           echo "Processing cloud cover data..."
           gdal_translate -ot Byte \
-            -scale 0.0 100.0 0 255 \
+            -scale 0 100 0 255 \
             -of PNG \
             raw-data/cloud_current.grib \
             processed-data/cloud_${gfs_date}_${gfs_run}z.png
@@ -210,7 +211,7 @@ jobs:
           # Reflectivity processing: Scale observed range to Byte
           echo "Processing reflectivity data..."
           gdal_translate -ot Byte \
-            -scale ${{ steps.stats.outputs.refl_min }} ${{ steps.stats.outputs.refl_max }} 0 255 \
+            -scale 0 60 0 255 \
             -of PNG \
             raw-data/reflectivity_current.grib \
             processed-data/reflectivity_${gfs_date}_${gfs_run}z.png
