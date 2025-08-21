@@ -44,7 +44,7 @@ jobs:
               run_time="${gfs_date} ${gfs_run}:00"
               run_ts=$(date -u -d "$run_time" +%s)
 
-              # Skip if run is less than 5h old
+              # Skip if run is less than 5h old (data not reliably available yet)
               if (( NOW_TS - run_ts < 18000 )); then
                 echo "Skipping ${gfs_date} ${gfs_run}Z (not available yet)"
                 continue
@@ -71,38 +71,32 @@ jobs:
               download_grib "UGRD" "10_m_above_ground" "wind_u_${gfs_date}_${gfs_run}z.grib"
               download_grib "VGRD" "10_m_above_ground" "wind_v_${gfs_date}_${gfs_run}z.grib"
               download_grib "TCDC" "entire_atmosphere" "cloud_${gfs_date}_${gfs_run}z.grib"
-              download_grib "TMP" "2_m_above_ground" "temp_${gfs_date}_${gfs_run}z.grib"
+              download_grib "TMP"  "2_m_above_ground"  "temp_${gfs_date}_${gfs_run}z.grib"
               download_grib "REFC" "entire_atmosphere" "reflectivity_${gfs_date}_${gfs_run}z.grib"
 
               cd ..
 
-              # Process to PNG
+              # --- Process to PNG (single-line commands to avoid YAML line-continuation pitfalls) ---
+
+              # Wind (U=R, V=G, duplicate V in B for RGBA structure if needed)
               if [[ -s raw-data/wind_u_${gfs_date}_${gfs_run}z.grib && -s raw-data/wind_v_${gfs_date}_${gfs_run}z.grib ]]; then
-                gdalbuildvrt -separate "raw-data/wind_${gfs_date}_${gfs_run}z.vrt" \
-                  "raw-data/wind_u_${gfs_date}_${gfs_run}z.grib" \
-                  "raw-data/wind_v_${gfs_date}_${gfs_run}z.grib" \
-                  "raw-data/wind_v_${gfs_date}_${gfs_run}z.grib"
-                gdal_translate -ot Byte -scale -128 127 0 255 --config GRIB_NORMALIZE_UNITS=NO -of PNG \
-                  "raw-data/wind_${gfs_date}_${gfs_run}z.vrt" \
-                  "processed-data/wind_${gfs_date}_${gfs_run}z.png"
+                gdalbuildvrt -separate raw-data/wind_${gfs_date}_${gfs_run}z.vrt raw-data/wind_u_${gfs_date}_${gfs_run}z.grib raw-data/wind_v_${gfs_date}_${gfs_run}z.grib raw-data/wind_v_${gfs_date}_${gfs_run}z.grib
+                gdal_translate -ot Byte -scale -128 127 0 255 -of PNG raw-data/wind_${gfs_date}_${gfs_run}z.vrt processed-data/wind_${gfs_date}_${gfs_run}z.png
               fi
 
+              # Cloud cover (%)
               if [[ -s raw-data/cloud_${gfs_date}_${gfs_run}z.grib ]]; then
-                gdal_translate -ot Byte -scale 0 100 0 255 -of PNG \
-                  "raw-data/cloud_${gfs_date}_${gfs_run}z.grib" \
-                  "processed-data/cloud_${gfs_date}_${gfs_run}z.png"
+                gdal_translate -ot Byte -scale 0 100 0 255 -of PNG raw-data/cloud_${gfs_date}_${gfs_run}z.grib processed-data/cloud_${gfs_date}_${gfs_run}z.png
               fi
 
+              # Temperature (K -> fixed scale to PNG; DO NOT CHANGE as requested)
               if [[ -s raw-data/temp_${gfs_date}_${gfs_run}z.grib ]]; then
-                gdal_translate -ot Byte -scale 213.15 325.15 0 255 -of PNG \
-                  "raw-data/temp_${gfs_date}_${gfs_run}z.grib" \
-                  "processed-data/temp_${gfs_date}_${gfs_run}z.png"
+                gdal_translate -ot Byte -scale 213.15 325.15 0 255 --config GRIB_NORMALIZE_UNITS=NO -of PNG raw-data/temp_${gfs_date}_${gfs_run}z.grib processed-data/temp_${gfs_date}_${gfs_run}z.png
               fi
 
+              # Composite reflectivity (dBZ)
               if [[ -s raw-data/reflectivity_${gfs_date}_${gfs_run}z.grib ]]; then
-                gdal_translate -ot Byte -scale 0 60 0 255 -of PNG \
-                  "raw-data/reflectivity_${gfs_date}_${gfs_run}z.grib" \
-                  "processed-data/reflectivity_${gfs_date}_${gfs_run}z.png"
+                gdal_translate -ot Byte -scale 0 60 0 255 -of PNG raw-data/reflectivity_${gfs_date}_${gfs_run}z.grib processed-data/reflectivity_${gfs_date}_${gfs_run}z.png
               fi
 
             done
