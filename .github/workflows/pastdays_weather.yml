@@ -91,7 +91,7 @@ jobs:
 
               # Temperature (K -> fixed scale to PNG; DO NOT CHANGE as requested)
               if [[ -s raw-data/temp_${gfs_date}_${gfs_run}z.grib ]]; then
-                gdal_translate -ot Byte -scale 213.15 325.15 0 255 --config GRIB_NORMALIZE_UNITS=NO -of PNG raw-data/temp_${gfs_date}_${gfs_run}z.grib processed-data/temp_${gfs_date}_${gfs_run}z.png
+                gdal_translate --config GRIB_NORMALIZE_UNITS=NO -ot Byte -scale 213.15 325.15 0 255 -of PNG raw-data/temp_${gfs_date}_${gfs_run}z.grib processed-data/temp_${gfs_date}_${gfs_run}z.png
               fi
 
               # Composite reflectivity (dBZ)
