@@ -83,35 +83,11 @@ jobs:
                 echo "Processing wind data for WeatherLayers GL..."
                 
                 # Create VRT with U, V, V structure as per WeatherLayers GL docs
-                gdalbuildvrt -separate raw-data/wind_${gfs_date}_${gfs_run}z.vrt \
-                  raw-data/wind_u_${gfs_date}_${gfs_run}z.grib \
-                  raw-data/wind_v_${gfs_date}_${gfs_run}z.grib \
-                  raw-data/wind_v_${gfs_date}_${gfs_run}z.grib
-                
-                # Calculate actual min/max values from both U and V components
-                echo "Calculating wind data statistics..."
-                u_stats=$(gdalinfo -stats raw-data/wind_u_${gfs_date}_${gfs_run}z.grib | grep -E "Minimum=|Maximum=" | head -2)
-                v_stats=$(gdalinfo -stats raw-data/wind_v_${gfs_date}_${gfs_run}z.grib | grep -E "Minimum=|Maximum=" | head -2)
-                
-                u_min=$(echo "$u_stats" | grep "Minimum=" | sed 's/.*Minimum=\([^,]*\).*/\1/')
-                u_max=$(echo "$u_stats" | grep "Maximum=" | sed 's/.*Maximum=\([^,]*\).*/\1/')
-                v_min=$(echo "$v_stats" | grep "Minimum=" | sed 's/.*Minimum=\([^,]*\).*/\1/')
-                v_max=$(echo "$v_stats" | grep "Maximum=" | sed 's/.*Maximum=\([^,]*\).*/\1/')
-                
-                # Find overall min and max across both components
-                overall_min=$(echo "$u_min $v_min" | tr ' ' '\n' | sort -n | head -1)
-                overall_max=$(echo "$u_max $v_max" | tr ' ' '\n' | sort -n | tail -1)
-                
-                echo "Wind data range: [$overall_min, $overall_max] m/s"
+                gdalbuildvrt -separate raw-data/wind_${gfs_date}_${gfs_run}z.vrt raw-data/wind_u_${gfs_date}_${gfs_run}z.grib raw-data/wind_v_${gfs_date}_${gfs_run}z.grib raw-data/wind_v_${gfs_date}_${gfs_run}z.grib
                 
                 # Convert to PNG using actual data range
-                gdal_translate -ot Byte -scale -128 127 0 255 -of PNG \
-                  raw-data/wind_${gfs_date}_${gfs_run}z.vrt \
-                  processed-data/wind_${gfs_date}_${gfs_run}z.png
-                
-                # Store min/max values for metadata
-                echo "{\"wind_min\": $overall_min, \"wind_max\": $overall_max}" > processed-data/wind_stats_${gfs_date}_${gfs_run}z.json
-                
+                gdal_translate -ot Byte -scale -127 128 0 255 -of PNG raw-data/wind_${gfs_date}_${gfs_run}z.vrt processed-data/wind_${gfs_date}_${gfs_run}z.png
+                                
                 # Clean up VRT
                 rm -f raw-data/wind_${gfs_date}_${gfs_run}z.vrt
               fi
@@ -123,12 +99,7 @@ jobs:
 
               # Temperature (K -> fixed scale to PNG; DO NOT CHANGE as requested)
               if [[ -s raw-data/temp_${gfs_date}_${gfs_run}z.grib ]]; then
-                gdal_translate \
-                  -ot Byte \
-                  -scale -60 52 0 255 \
-                  -of PNG \
-                  raw-data/temp_${gfs_date}_${gfs_run}z.grib \
-                  processed-data/temp_${gfs_date}_${gfs_run}z.png
+                gdal_translate -ot Byte -scale -60 52 0 255 -of PNG raw-data/temp_${gfs_date}_${gfs_run}z.grib processed-data/temp_${gfs_date}_${gfs_run}z.png
               fi
 
               # Composite reflectivity (dBZ)
