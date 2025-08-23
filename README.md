@@ -117,13 +117,6 @@ All other variables use single-channel grayscale PNG format.
 - Uses descriptive commit messages with timestamps
 - Automatically pushes to main branch
 
-## Dependencies
-
-### System Requirements
-- Ubuntu Linux (GitHub Actions runner)
-- GDAL/OGR with Python bindings
-- Standard Unix tools (curl, jq, date, find)
-
 ### GDAL Tools Used
 - `gdalinfo` - Inspect GRIB metadata
 - `gdalbuildvrt` - Create virtual datasets for multi-band wind data  
