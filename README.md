@@ -63,7 +63,7 @@ All other variables use single-channel grayscale PNG format.
 
 ## Workflows Details
 
-### Scheduled Weather Data (`scheduled_weather_data.yml`)
+### Scheduled Weather Data (`weather-data.yml`)
 
 **Purpose**: Maintains current weather data automatically
 
@@ -79,7 +79,7 @@ All other variables use single-channel grayscale PNG format.
 
 **Data Retention**: Keeps last 20 days of data (configurable)
 
-### Historical Weather Data (`historical-weather-data.yml`)
+### Historical Weather Data (`pastdays-weather.yml`)
 
 **Purpose**: Backfill missing historical data or batch process multiple days
 
