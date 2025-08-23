@@ -23,7 +23,7 @@ The workflows specifically use **f000** forecast hour data.
 This prefix in a GFS data file indicates the forecast hour. "f000" specifically denotes that this is the output 
 from the very beginning of the model run—the "0-hour forecast". 
 It essentially contains the initial conditions, or analysis, upon which the subsequent forecasts are based. 
-This makes f000 data ideal for current weather visualization and near real-time applications, as opposed to forecast data (f003, f006, etc.) which would show predicted future conditions.
+This makes f000 data ideal for current-like "low resolution" global weather visualization, as opposed to forecast data (f003, f006, etc.) which would show predicted future conditions.
 
 ## Weather Variables
 
