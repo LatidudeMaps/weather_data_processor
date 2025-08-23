@@ -6,8 +6,8 @@ This repository contains GitHub Actions workflows that automatically fetch, proc
 
 Two workflows work together to provide comprehensive weather data coverage:
 
-1. **Scheduled Weather Data** (`scheduled_weather_data.yml`) - Runs automatically every 6 hours
-2. **Historical Weather Data** (`historical-weather-data.yml`) - Manual trigger for backfilling data
+1. **Scheduled Weather Data** (`weather-data.yml`) - Runs automatically every 6 hours
+2. **Historical Weather Data** (`pastdays-weather.yml`) - Manual trigger for backfilling data
 
 ## Data Sources
 
