@@ -121,52 +121,6 @@ jobs:
           echo "Files downloaded:"
           ls -la *.grib 2>/dev/null || echo "No GRIB files downloaded"
 
-      - name: Compute data statistics and ranges
-        id: stats
-        run: |
-          #!/bin/bash
-          set -e
-          
-          echo "Computing statistics for each weather parameter..."
-          
-          # Function to get min/max from gdalinfo
-          get_minmax() {
-            local file="$1"
-            gdalinfo -stats "$file" | grep -E "STATISTICS_(MINIMUM|MAXIMUM)" | \
-            sed -E 's/.*STATISTICS_(MINIMUM|MAXIMUM)=([0-9.-]+).*/\2/' | \
-            tr '\n' ' ' | awk '{print $1, $2}'
-          }
-          
-          # Get statistics for each parameter
-          wind_u_stats=($(get_minmax "raw-data/wind_u_current.grib"))
-          wind_v_stats=($(get_minmax "raw-data/wind_v_current.grib"))
-          temp_stats=($(get_minmax "raw-data/temp_current.grib"))
-          cloud_stats=($(get_minmax "raw-data/cloud_current.grib"))
-          refl_stats=($(get_minmax "raw-data/reflectivity_current.grib"))
-          
-          # Wind: use combined min/max of both components for consistent scaling
-          wind_min=$(echo "${wind_u_stats[0]} ${wind_v_stats[0]}" | awk '{print ($1 < $2) ? $1 : $2}')
-          wind_max=$(echo "${wind_u_stats[1]} ${wind_v_stats[1]}" | awk '{print ($1 > $2) ? $1 : $2}')
-          
-          # Set output variables
-          echo "wind_min=${wind_min}" >> $GITHUB_OUTPUT
-          echo "wind_max=${wind_max}" >> $GITHUB_OUTPUT
-          echo "temp_min=${temp_stats[0]}" >> $GITHUB_OUTPUT
-          echo "temp_max=${temp_stats[1]}" >> $GITHUB_OUTPUT
-          echo "cloud_min=${cloud_stats[0]}" >> $GITHUB_OUTPUT
-          echo "cloud_max=${cloud_stats[1]}" >> $GITHUB_OUTPUT
-          echo "refl_min=${refl_stats[0]}" >> $GITHUB_OUTPUT
-          echo "refl_max=${refl_stats[1]}" >> $GITHUB_OUTPUT
-          
-          # Log the ranges
-          echo "=== DATA RANGES ==="
-          echo "Wind U: ${wind_u_stats[0]} to ${wind_u_stats[1]} m/s"
-          echo "Wind V: ${wind_v_stats[0]} to ${wind_v_stats[1]} m/s"
-          echo "Wind combined: ${wind_min} to ${wind_max} m/s"
-          echo "Temperature: ${temp_stats[0]} to ${temp_stats[1]} °C"
-          echo "Cloud Cover: ${cloud_stats[0]} to ${cloud_stats[1]} %"
-          echo "Reflectivity: ${refl_stats[0]} to ${refl_stats[1]} dBZ"
-
       - name: Process GRIB to WeatherLayers format
         run: |
           #!/bin/bash
@@ -179,42 +133,22 @@ jobs:
           
           # Wind processing: Create 3-band VRT (R=U, G=V, B=V) then scale to Byte
           echo "Processing wind data..."
-          gdalbuildvrt -separate processed-data/wind_temp.vrt \
-            raw-data/wind_u_current.grib \
-            raw-data/wind_v_current.grib \
-            raw-data/wind_v_current.grib
+          gdalbuildvrt -separate processed-data/wind_temp.vrt raw-data/wind_u_current.grib raw-data/wind_v_current.grib raw-data/wind_v_current.grib
           
-          gdal_translate -ot Byte \
-            -scale -128 127 0 255 \
-            -of PNG \
-            processed-data/wind_temp.vrt \
-            processed-data/wind_${gfs_date}_${gfs_run}z.png
+          gdal_translate -ot Byte -scale -128 127 0 255 -of PNG processed-data/wind_temp.vrt processed-data/wind_${gfs_date}_${gfs_run}z.png
           rm processed-data/wind_temp.vrt
           
           # Temperature processing: Scale Celsius values to Byte
           echo "Processing temperature data..."
-          gdal_translate -ot Byte \
-            -scale 213.15 325.15 0 255 \
-            --config GRIB_NORMALIZE_UNITS=NO \
-            -of PNG \
-            raw-data/temp_current.grib \
-            processed-data/temp_${gfs_date}_${gfs_run}z.png
+          gdal_translate -ot Byte -scale -60 52 0 255 -of PNG raw-data/temp_current.grib processed-data/temp_${gfs_date}_${gfs_run}z.png
           
           # Cloud cover processing: Scale percentage to Byte (use semantic 0-100 range)
           echo "Processing cloud cover data..."
-          gdal_translate -ot Byte \
-            -scale 0 100 0 255 \
-            -of PNG \
-            raw-data/cloud_current.grib \
-            processed-data/cloud_${gfs_date}_${gfs_run}z.png
+          gdal_translate -ot Byte -scale 0 100 0 255 -of PNG raw-data/cloud_current.grib processed-data/cloud_${gfs_date}_${gfs_run}z.png
           
           # Reflectivity processing: Scale observed range to Byte
           echo "Processing reflectivity data..."
-          gdal_translate -ot Byte \
-            -scale 0 60 0 255 \
-            -of PNG \
-            raw-data/reflectivity_current.grib \
-            processed-data/reflectivity_${gfs_date}_${gfs_run}z.png
+          gdal_translate -ot Byte -scale 0 60 0 255 -of PNG raw-data/reflectivity_current.grib processed-data/reflectivity_${gfs_date}_${gfs_run}z.png
           
           # Verify all outputs are Byte format
           echo "=== OUTPUT VERIFICATION ==="
@@ -223,69 +157,12 @@ jobs:
             echo "$(basename $file): $info"
           done
 
-      - name: Generate metadata
-        run: |
-          #!/bin/bash
-          set -e
-          
-          gfs_date="${{ steps.gfs-info.outputs.gfs_date }}"
-          gfs_run="${{ steps.gfs-info.outputs.gfs_run }}"
-          
-          # Create comprehensive metadata JSON
-          cat > processed-data/metadata_${gfs_date}_${gfs_run}z.json << EOF
-          {
-            "gfs": {
-              "date": "${gfs_date}",
-              "run": "${gfs_run}",
-              "forecast_hour": "000"
-            },
-            "processing": {
-              "notes": "All outputs scaled to Byte (0-255) using actual min/max from data",
-              "time_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-              "scaling_method": "Linear scaling using gdal_translate -scale with actual data ranges"
-            },
-            "layers": {
-              "wind": {
-                "png": "wind_${gfs_date}_${gfs_run}z.png",
-                "format": "Byte",
-                "encoding": "R=UGRD(10m), G=VGRD(10m), B=VGRD(10m)",
-                "input_domain_ms": [${{ steps.stats.outputs.wind_min }}, ${{ steps.stats.outputs.wind_max }}],
-                "units": "m/s",
-                "level": "10m above ground"
-              },
-              "temperature": {
-                "png": "temp_${gfs_date}_${gfs_run}z.png",
-                "format": "Byte",
-                "input_domain_celsius": [${{ steps.stats.outputs.temp_min }}, ${{ steps.stats.outputs.temp_max }}],
-                "units": "°C",
-                "level": "2m above ground",
-                "note": "GFS temperature data is natively in Celsius"
-              },
-              "cloud": {
-                "png": "cloud_${gfs_date}_${gfs_run}z.png", 
-                "format": "Byte",
-                "input_domain_percent": [0.0, 100.0],
-                "actual_range_percent": [${{ steps.stats.outputs.cloud_min }}, ${{ steps.stats.outputs.cloud_max }}],
-                "units": "%",
-                "level": "entire atmosphere"
-              },
-              "reflectivity": {
-                "png": "reflectivity_${gfs_date}_${gfs_run}z.png",
-                "format": "Byte", 
-                "input_domain_dbz": [${{ steps.stats.outputs.refl_min }}, ${{ steps.stats.outputs.refl_max }}],
-                "units": "dBZ",
-                "level": "entire atmosphere"
-              }
-            }
-          }
-          EOF
-
       - name: Clean up old processed data (keep last 7 days)
         run: |
           #!/bin/bash
-          # Remove processed data files older than 7 days
-          find processed-data -name "*.png" -mtime +7 -delete || true
-          find processed-data -name "*.json" -mtime +7 -delete || true
+          # Remove processed data files older than 365 days
+          find processed-data -name "*.png" -mtime +365 -delete || true
+          find processed-data -name "*.json" -mtime +365 -delete || true
           
           # Clean up temp directories
           rm -rf raw-data
@@ -313,10 +190,6 @@ jobs:
           
           # Commit with descriptive message
           git commit -m "Add weather data for ${gfs_date} ${gfs_run}Z
-
-          🌤️ Generated with [Claude Code](https://claude.ai/code)
-          
-          Co-Authored-By: Claude <noreply@anthropic.com>"
           
           # Push changes
           git push
