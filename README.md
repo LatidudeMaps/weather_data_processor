@@ -125,21 +125,3 @@ All other variables use single-channel grayscale PNG format.
 ## Usage with MapLibre GL JS
 
 For WeatherLayers GL integration, please check the official documentation at https://docs.weatherlayers.com/weatherlayers-gl
-
-## Monitoring and Troubleshooting
-
-### Common Issues
-- **Data availability delays**: GFS runs may be delayed; workflows include fallback logic
-- **Network timeouts**: NOAA servers occasionally timeout; retry logic handles this
-- **Disk space**: Old data is automatically cleaned up (20-day retention)
-
-### Logs
-- Each workflow step provides detailed logging
-- Failed downloads are logged but don't stop the workflow
-- Successful processing includes file verification output
-
-### Manual Intervention
-If workflows fail:
-1. Check NOAA server status
-2. Run Historical Weather Data workflow to backfill
-3. Review GitHub Actions logs for specific error messages
