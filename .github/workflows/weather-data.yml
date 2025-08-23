@@ -157,11 +157,12 @@ jobs:
             echo "$(basename $file): $info"
           done
 
-      - name: Clean up old processed data (keep last 365 days)
+      - name: Clean up old processed data (keep last 20 days)
         run: |
           #!/bin/bash
-          # Remove processed data files older than 365 days
-          find processed-data -name "*.png" -mtime +365 -delete || true
+          # Remove processed data files older than 20 days
+          find processed-data -name "*.png" -mtime +20 -delete || true
+          find processed-data -name "*.png.aux.xml" -mtime +20 -delete || true
           
           # Clean up temp directories
           rm -rf raw-data
@@ -188,7 +189,7 @@ jobs:
           fi
           
           # Commit with descriptive message
-          git commit -m "Add weather data for ${gfs_date} ${gfs_run}Z
+          git commit -m "Add weather data for ${gfs_date} ${gfs_run}Z"
           
           # Push changes
           git push
