@@ -16,7 +16,7 @@ Two workflows work together to provide comprehensive weather data coverage:
 - **Resolution**: 0.25° (~25km)
 - **Update Frequency**: Every 6 hours (00Z, 06Z, 12Z, 18Z)
 - **Data Availability**: Usually 3-4 hours after model run time
-- - **Forecast Hour**: f000 (analysis/initial conditions)
+- **Forecast Hour**: f000 (analysis/initial conditions)
 
 #### About f000 Data
 The workflows specifically use **f000** forecast hour data.
