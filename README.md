@@ -16,16 +16,13 @@ Two workflows work together to provide comprehensive weather data coverage:
 - **Resolution**: 0.25° (~25km)
 - **Update Frequency**: Every 6 hours (00Z, 06Z, 12Z, 18Z)
 - **Data Availability**: Usually 3-4 hours after model run time
-- - **Forecast Hour**: f000 (analysis/current conditions)
+- - **Forecast Hour**: f000 (analysis/initial conditions)
 
 #### About f000 Data
-The workflows specifically use **f000** forecast hour data, which represents:
-- **Analysis Data**: Not a forecast, but the model's best estimate of current atmospheric conditions
-- **Data Assimilation**: Combines observations from weather stations, satellites, radiosondes, and aircraft
-- **Real-time Conditions**: Represents the atmospheric state at the model run time (00Z, 06Z, 12Z, 18Z)
-- **Highest Accuracy**: Most accurate data available, as it's based on actual observations rather than predictions
-- **Immediate Availability**: Available as soon as the model analysis cycle completes (~3-4 hours after run time)
-
+The workflows specifically use **f000** forecast hour data.
+This prefix in a GFS data file indicates the forecast hour. "f000" specifically denotes that this is the output 
+from the very beginning of the model run—the "0-hour forecast". 
+It essentially contains the initial conditions, or analysis, upon which the subsequent forecasts are based. 
 This makes f000 data ideal for current weather visualization and near real-time applications, as opposed to forecast data (f003, f006, etc.) which would show predicted future conditions.
 
 ## Weather Variables
