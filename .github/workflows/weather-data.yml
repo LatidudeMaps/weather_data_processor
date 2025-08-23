@@ -157,12 +157,11 @@ jobs:
             echo "$(basename $file): $info"
           done
 
-      - name: Clean up old processed data (keep last 7 days)
+      - name: Clean up old processed data (keep last 365 days)
         run: |
           #!/bin/bash
           # Remove processed data files older than 365 days
           find processed-data -name "*.png" -mtime +365 -delete || true
-          find processed-data -name "*.json" -mtime +365 -delete || true
           
           # Clean up temp directories
           rm -rf raw-data
