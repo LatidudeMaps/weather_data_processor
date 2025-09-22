@@ -180,7 +180,7 @@ jobs:
           git config --local user.name "GitHub Action"
           
           # Add processed files
-          git add processed-data/
+          git add -A processed-data/
           
           # Check if there are changes to commit
           if git diff --staged --quiet; then
