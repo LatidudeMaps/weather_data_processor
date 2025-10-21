@@ -160,10 +160,37 @@ jobs:
       - name: Clean up old processed data (keep last 10 days)
         run: |
           #!/bin/bash
-          # Remove processed data files older than 10 days
-          find processed-data -name "*.png" -mtime +10 -delete || true
-          find processed-data -name "*.png.aux.xml" -mtime +10 -delete || true
-          
+          set -e
+
+          # Calculate cutoff date (10 days ago)
+          cutoff_date=$(date -u -d "10 days ago" +%Y%m%d)
+          echo "Cutoff date: $cutoff_date"
+          echo "Removing files older than: $cutoff_date"
+
+          # Find and remove PNG files older than cutoff date based on filename
+          files_removed=0
+          for file in processed-data/*.png 2>/dev/null; do
+            # Skip if no files match
+            [ -e "$file" ] || continue
+
+            # Extract date from filename (format: prefix_YYYYMMDD_HHz.png)
+            file_date=$(basename "$file" | grep -oP '\d{8}' | head -1)
+
+            # Skip if no date found in filename
+            [ -z "$file_date" ] && continue
+
+            # Compare dates and remove if older than cutoff
+            if [ "$file_date" -lt "$cutoff_date" ]; then
+              echo "Removing old file: $file (date: $file_date)"
+              git rm -f "$file" || true
+              # Also remove associated aux.xml files
+              git rm -f "${file}.aux.xml" 2>/dev/null || true
+              ((files_removed++))
+            fi
+          done
+
+          echo "Removed $files_removed old file(s)"
+
           # Clean up temp directories
           rm -rf raw-data
 
