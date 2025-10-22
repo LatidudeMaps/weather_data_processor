@@ -169,7 +169,7 @@ jobs:
 
           # Find and remove PNG files older than cutoff date based on filename
           files_removed=0
-          for file in processed-data/*.png 2>/dev/null; do
+          for file in processed-data/*.png; do
             # Skip if no files match
             [ -e "$file" ] || continue
 
