@@ -162,8 +162,8 @@ jobs:
           #!/bin/bash
           set -e
 
-          # Calculate cutoff date (10 days ago)
-          cutoff_date=$(date -u -d "10 days ago" +%Y%m%d)
+          # Calculate cutoff date (3 days ago)
+          cutoff_date=$(date -u -d "3 days ago" +%Y%m%d)
           echo "Cutoff date: $cutoff_date"
           echo "Removing files older than: $cutoff_date"
 
