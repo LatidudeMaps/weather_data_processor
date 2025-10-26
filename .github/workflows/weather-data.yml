@@ -190,47 +190,68 @@ jobs:
         run: |
           echo "=== CLEANUP: Removing files older than 3 days ==="
 
-          # Find and log PNG files to be deleted
-          old_pngs=$(find processed-data/ -name "*.png" -mtime +3 2>/dev/null || true)
-          if [ -n "$old_pngs" ]; then
-            echo "Deleting PNG files:"
-            echo "$old_pngs"
-            find processed-data/ -name "*.png" -mtime +3 -delete || true
-          fi
+          # Calculate cutoff date (3 days ago)
+          cutoff_date=$(date -u -d "3 days ago" +%Y%m%d)
+          echo "Cutoff date: $cutoff_date (removing files older than this)"
 
-          # Find and log JSON files to be deleted
-          old_jsons=$(find processed-data/ -name "*.json" -mtime +3 2>/dev/null || true)
-          if [ -n "$old_jsons" ]; then
-            echo "Deleting JSON files:"
-            echo "$old_jsons"
-            find processed-data/ -name "*.json" -mtime +3 -delete || true
-          fi
+          files_deleted=0
 
-          # Find and log aux.xml files to be deleted
-          old_aux=$(find processed-data/ -name "*.aux.xml" -mtime +3 2>/dev/null || true)
-          if [ -n "$old_aux" ]; then
-            echo "Deleting aux.xml files:"
-            echo "$old_aux"
-            find processed-data/ -name "*.aux.xml" -mtime +3 -delete || true
-          fi
+          # Process PNG files and their associated aux.xml files
+          for file in processed-data/*.png; do
+            # Skip if no files match
+            [ -e "$file" ] || continue
 
-          # Clean up raw GRIB files
-          old_gribs=$(find raw-data/ -name "*.grib" 2>/dev/null || true)
-          if [ -n "$old_gribs" ]; then
-            echo "Deleting GRIB files:"
-            echo "$old_gribs"
-            find raw-data/ -name "*.grib" -delete || true
-          fi
+            # Extract date from filename (format: prefix_YYYYMMDD_HHz.png)
+            file_date=$(basename "$file" | grep -oP '\d{8}' | head -1)
 
-          # Count total deleted files
-          total_deleted=$(echo "$old_pngs" "$old_jsons" "$old_aux" "$old_gribs" | wc -w)
-          echo "=== CLEANUP COMPLETE: Deleted $total_deleted file(s) ==="
+            # Skip if no date found in filename
+            [ -z "$file_date" ] && continue
+
+            # Compare dates and remove if older than cutoff
+            if [ "$file_date" -lt "$cutoff_date" ]; then
+              echo "Deleting: $file (date: $file_date)"
+              rm -f "$file"
+              rm -f "${file}.aux.xml" 2>/dev/null || true
+              files_deleted=$((files_deleted + 1))
+            fi
+          done
+
+          # Process JSON metadata files
+          for file in processed-data/*.json; do
+            # Skip if no files match
+            [ -e "$file" ] || continue
+
+            # Extract date from filename
+            file_date=$(basename "$file" | grep -oP '\d{8}' | head -1)
+
+            # Skip if no date found
+            [ -z "$file_date" ] && continue
+
+            # Compare and remove if old
+            if [ "$file_date" -lt "$cutoff_date" ]; then
+              echo "Deleting: $file (date: $file_date)"
+              rm -f "$file"
+              files_deleted=$((files_deleted + 1))
+            fi
+          done
+
+          # Clean up raw GRIB files (delete all)
+          for file in raw-data/*.grib 2>/dev/null; do
+            [ -e "$file" ] || continue
+            echo "Deleting: $file"
+            rm -f "$file"
+          done
+
+          echo "=== CLEANUP COMPLETE: Deleted $files_deleted old data file(s) ==="
 
           # Commit cleanup if any files were removed
-          if ! git diff --exit-code processed-data/; then
+          if ! git diff --exit-code processed-data/ >/dev/null 2>&1; then
             git config --local user.email "action@github.com"
             git config --local user.name "GitHub Action"
             git add processed-data/
             git commit -m "Clean up old weather data (keep 3 days)"
             git push
+            echo "Committed and pushed cleanup changes"
+          else
+            echo "No files to clean up"
           fi
