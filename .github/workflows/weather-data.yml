@@ -188,11 +188,43 @@ jobs:
 
       - name: Clean up old data (keep last 3 days)
         run: |
-          # Remove PNG and metadata files older than 3 days to prevent repository bloat
-          find processed-data/ -name "*.png" -mtime +3 -delete || true
-          find processed-data/ -name "*.json" -mtime +3 -delete || true
-          find processed-data/ -name "*.aux.xml" -mtime +3 -delete || true
-          find raw-data/ -name "*.grib" -delete || true
+          echo "=== CLEANUP: Removing files older than 3 days ==="
+
+          # Find and log PNG files to be deleted
+          old_pngs=$(find processed-data/ -name "*.png" -mtime +3 2>/dev/null || true)
+          if [ -n "$old_pngs" ]; then
+            echo "Deleting PNG files:"
+            echo "$old_pngs"
+            find processed-data/ -name "*.png" -mtime +3 -delete || true
+          fi
+
+          # Find and log JSON files to be deleted
+          old_jsons=$(find processed-data/ -name "*.json" -mtime +3 2>/dev/null || true)
+          if [ -n "$old_jsons" ]; then
+            echo "Deleting JSON files:"
+            echo "$old_jsons"
+            find processed-data/ -name "*.json" -mtime +3 -delete || true
+          fi
+
+          # Find and log aux.xml files to be deleted
+          old_aux=$(find processed-data/ -name "*.aux.xml" -mtime +3 2>/dev/null || true)
+          if [ -n "$old_aux" ]; then
+            echo "Deleting aux.xml files:"
+            echo "$old_aux"
+            find processed-data/ -name "*.aux.xml" -mtime +3 -delete || true
+          fi
+
+          # Clean up raw GRIB files
+          old_gribs=$(find raw-data/ -name "*.grib" 2>/dev/null || true)
+          if [ -n "$old_gribs" ]; then
+            echo "Deleting GRIB files:"
+            echo "$old_gribs"
+            find raw-data/ -name "*.grib" -delete || true
+          fi
+
+          # Count total deleted files
+          total_deleted=$(echo "$old_pngs" "$old_jsons" "$old_aux" "$old_gribs" | wc -w)
+          echo "=== CLEANUP COMPLETE: Deleted $total_deleted file(s) ==="
 
           # Commit cleanup if any files were removed
           if ! git diff --exit-code processed-data/; then
