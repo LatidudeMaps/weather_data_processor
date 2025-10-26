@@ -157,43 +157,6 @@ jobs:
             echo "$(basename $file): $info"
           done
 
-      - name: Clean up old processed data (keep last 10 days)
-        run: |
-          #!/bin/bash
-          set -e
-
-          # Calculate cutoff date (3 days ago)
-          cutoff_date=$(date -u -d "3 days ago" +%Y%m%d)
-          echo "Cutoff date: $cutoff_date"
-          echo "Removing files older than: $cutoff_date"
-
-          # Find and remove PNG files older than cutoff date based on filename
-          files_removed=0
-          for file in processed-data/*.png; do
-            # Skip if no files match
-            [ -e "$file" ] || continue
-
-            # Extract date from filename (format: prefix_YYYYMMDD_HHz.png)
-            file_date=$(basename "$file" | grep -oP '\d{8}' | head -1)
-
-            # Skip if no date found in filename
-            [ -z "$file_date" ] && continue
-
-            # Compare dates and remove if older than cutoff
-            if [ "$file_date" -lt "$cutoff_date" ]; then
-              echo "Removing old file: $file (date: $file_date)"
-              git rm -f "$file" || true
-              # Also remove associated aux.xml files
-              git rm -f "${file}.aux.xml" 2>/dev/null || true
-              ((files_removed++))
-            fi
-          done
-
-          echo "Removed $files_removed old file(s)"
-
-          # Clean up temp directories
-          rm -rf raw-data
-
       - name: Commit and push processed data
         run: |
           #!/bin/bash
@@ -220,5 +183,22 @@ jobs:
           
           # Push changes
           git push
-          
+
           echo "✅ Successfully processed and committed weather data for ${gfs_date} ${gfs_run}Z"
+
+      - name: Clean up old data (keep last 3 days)
+        run: |
+          # Remove PNG and metadata files older than 3 days to prevent repository bloat
+          find processed-data/ -name "*.png" -mtime +3 -delete || true
+          find processed-data/ -name "*.json" -mtime +3 -delete || true
+          find processed-data/ -name "*.aux.xml" -mtime +3 -delete || true
+          find raw-data/ -name "*.grib" -delete || true
+
+          # Commit cleanup if any files were removed
+          if ! git diff --exit-code processed-data/; then
+            git config --local user.email "action@github.com"
+            git config --local user.name "GitHub Action"
+            git add processed-data/
+            git commit -m "Clean up old weather data (keep 3 days)"
+            git push
+          fi
