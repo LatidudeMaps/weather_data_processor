@@ -236,7 +236,7 @@ jobs:
           done
 
           # Clean up raw GRIB files (delete all)
-          for file in raw-data/*.grib 2>/dev/null; do
+          for file in raw-data/*.grib; do
             [ -e "$file" ] || continue
             echo "Deleting: $file"
             rm -f "$file"
