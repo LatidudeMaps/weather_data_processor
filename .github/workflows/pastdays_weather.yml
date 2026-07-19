@@ -23,9 +23,17 @@ on:
 permissions:
   contents: write
 
+# Serialize with the scheduled workflow to avoid conflicting pushes
+concurrency:
+  group: weather-data
+  cancel-in-progress: false
+
 jobs:
   process-historical-weather-data:
     runs-on: ubuntu-latest
+    env:
+      # Prevent GDAL from writing .png.aux.xml sidecar files
+      GDAL_PAM_ENABLED: "NO"
 
     steps:
       - name: Checkout repository
@@ -97,8 +105,9 @@ jobs:
                 # Create VRT with U, V, V structure as per WeatherLayers GL docs
                 gdalbuildvrt -separate raw-data/wind_${gfs_date}_${gfs_run}z.vrt raw-data/wind_u_${gfs_date}_${gfs_run}z.grib raw-data/wind_v_${gfs_date}_${gfs_run}z.grib raw-data/wind_v_${gfs_date}_${gfs_run}z.grib
                 
-                # Convert to PNG using actual data range
-                gdal_translate -ot Byte -scale -127 128 0 255 -of PNG raw-data/wind_${gfs_date}_${gfs_run}z.vrt processed-data/wind_${gfs_date}_${gfs_run}z.png
+                # Convert to PNG. IMPORTANT: keep the -scale range identical to
+                # weather-data.yml and to the frontend imageUnscale ([-128, 127])
+                gdal_translate -ot Byte -scale -128 127 0 255 -of PNG raw-data/wind_${gfs_date}_${gfs_run}z.vrt processed-data/wind_${gfs_date}_${gfs_run}z.png
                                 
                 # Clean up VRT
                 rm -f raw-data/wind_${gfs_date}_${gfs_run}z.vrt
@@ -122,11 +131,32 @@ jobs:
             done
           done
 
+      - name: Update manifest
+        run: |
+          # Keep manifest.json in sync with the backfilled files
+          python3 - <<'PY'
+          import json, os, re, datetime
+
+          variables = {}
+          for name in sorted(os.listdir('processed-data')):
+              m = re.match(r'^(cloud|temp|reflectivity|wind)_(\d{8}_\d{2}z)\.png$', name)
+              if m:
+                  variables.setdefault(m.group(1), []).append(m.group(2))
+
+          manifest = {
+              'generated': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+              'variables': variables,
+          }
+          with open('processed-data/manifest.json', 'w') as fh:
+              json.dump(manifest, fh, indent=1)
+          print(json.dumps({k: len(v) for k, v in variables.items()}))
+          PY
+
       - name: Commit and push processed data
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add processed-data/
+          git add -A processed-data/
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else

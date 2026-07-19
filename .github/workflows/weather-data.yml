@@ -2,16 +2,24 @@ name: Process Weather Data
 
 on:
   schedule:
-    - cron: '30 */6 * * *'   # Run every 6 hours
+    - cron: '30 */6 * * *'   # Nominally every 6 hours (GitHub may delay runs by hours)
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# Serialize with the historical backfill workflow to avoid conflicting pushes
+concurrency:
+  group: weather-data
+  cancel-in-progress: false
+
 jobs:
   process-grib-data:
     runs-on: ubuntu-latest
-    
+    env:
+      # Prevent GDAL from writing .png.aux.xml sidecar files
+      GDAL_PAM_ENABLED: "NO"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,237 +29,193 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gdal-bin python3-gdal curl jq python3-pip
-          pip3 install requests numpy
+          sudo apt-get install -y gdal-bin python3-gdal curl jq
           gdalinfo --version
-          
-      - name: Get current GFS run info
+
+      - name: Determine target GFS run
         id: gfs-info
         run: |
-          # Get current date and determine the latest available GFS run
-          # GFS data is usually available 3-4 hours after model run time
-          CURRENT_HOUR=$(date -u +%H)
-          
-          # Account for GFS data availability delay (usually 3-4 hours)
-          if [ $CURRENT_HOUR -ge 21 ]; then
-            GFS_RUN="18"
-            GFS_DATE=$(date -u +%Y%m%d)
-          elif [ $CURRENT_HOUR -ge 15 ]; then
-            GFS_RUN="12"
-            GFS_DATE=$(date -u +%Y%m%d)
-          elif [ $CURRENT_HOUR -ge 9 ]; then
-            GFS_RUN="06"
-            GFS_DATE=$(date -u +%Y%m%d)
-          elif [ $CURRENT_HOUR -ge 3 ]; then
-            GFS_RUN="00"
-            GFS_DATE=$(date -u +%Y%m%d)
-          else
-            # Use previous day's 18Z run
-            GFS_RUN="18"
-            GFS_DATE=$(date -u -d "yesterday" +%Y%m%d)
-          fi
-          
+          # Latest run whose data should already be on NOMADS (~3.5-4h publish delay).
+          # Derived from "now - 4h" so it is robust to GitHub's cron delays: whenever
+          # this job actually starts, it targets the newest available run instead of
+          # assuming the nominal schedule time. This is what makes the 18Z run get
+          # processed (by the delayed post-midnight run) instead of being skipped.
+          TARGET_TS=$(( $(date -u +%s) - 4 * 3600 ))
+          GFS_DATE=$(date -u -d "@${TARGET_TS}" +%Y%m%d)
+          GFS_RUN=$(printf "%02d" $(( 10#$(date -u -d "@${TARGET_TS}" +%H) / 6 * 6 )))
+
           echo "gfs_date=$GFS_DATE" >> $GITHUB_OUTPUT
           echo "gfs_run=$GFS_RUN" >> $GITHUB_OUTPUT
-          echo "Processing GFS data for date: $GFS_DATE, run: ${GFS_RUN}Z"
+          echo "Target GFS run: ${GFS_DATE}/${GFS_RUN}Z"
 
       - name: Download GFS GRIB data
-        run: |
-          GFS_DATE=${{ steps.gfs-info.outputs.gfs_date }}
-          GFS_RUN=${{ steps.gfs-info.outputs.gfs_run }}
-          
-          # Create directory for raw data
-          mkdir -p raw-data
-          cd raw-data
-          
-          echo "Downloading current GFS data for ${GFS_DATE}/${GFS_RUN}Z"
-          
-          # Function to try downloading with fallback to previous runs
-          download_with_fallback() {
-            local var_name=$1
-            local lev_name=$2
-            local output_file=$3
-            local current_date=$GFS_DATE
-            local current_run=$GFS_RUN
-            
-            # Try current run first
-            for attempt in 1 2 3; do
-              echo "Attempt $attempt: Downloading ${var_name} for ${current_date}/${current_run}Z..."
-              if curl -f -o "$output_file" \
-                "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${current_run}z.pgrb2.0p25.f000&var_${var_name}=on&lev_${lev_name}=on&dir=%2Fgfs.${current_date}%2F${current_run}%2Fatmos"; then
-                echo "Successfully downloaded ${var_name}"
-                return 0
-              fi
-              
-              # Fallback to previous run
-              if [ "$current_run" = "18" ]; then
-                current_run="12"
-              elif [ "$current_run" = "12" ]; then
-                current_run="06"
-              elif [ "$current_run" = "06" ]; then
-                current_run="00"
-              else
-                # Go to previous day's 18Z
-                current_date=$(date -u -d "${current_date:0:4}-${current_date:4:2}-${current_date:6:2} - 1 day" +%Y%m%d)
-                current_run="18"
-              fi
-              echo "Trying fallback: ${current_date}/${current_run}Z"
-            done
-            
-            echo "Failed to download ${var_name} after all attempts"
-            return 1
-          }
-          
-          # Download U component of wind at 10m above ground
-          download_with_fallback "UGRD" "10_m_above_ground" "wind_u_current.grib"
-          
-          # Download V component of wind at 10m above ground  
-          download_with_fallback "VGRD" "10_m_above_ground" "wind_v_current.grib"
-          
-          # Download temperature at 2m above ground
-          download_with_fallback "TMP" "2_m_above_ground" "temp_current.grib"
-          
-          # Download total cloud cover
-          download_with_fallback "TCDC" "entire_atmosphere" "cloud_current.grib"
-          
-          # Download composite reflectivity
-          download_with_fallback "REFC" "entire_atmosphere" "reflectivity_current.grib"
-          
-          # List downloaded files
-          echo "Files downloaded:"
-          ls -la *.grib 2>/dev/null || echo "No GRIB files downloaded"
-
-      - name: Process GRIB to WeatherLayers format
+        id: download
         run: |
           #!/bin/bash
           set -e
-          
-          gfs_date="${{ steps.gfs-info.outputs.gfs_date }}"
-          gfs_run="${{ steps.gfs-info.outputs.gfs_run }}"
-          
+
+          mkdir -p raw-data
+
+          download_var() {
+            local var_name=$1 lev_name=$2 output_file=$3 date=$4 run=$5
+            curl -sf -o "$output_file" \
+              "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl?file=gfs.t${run}z.pgrb2.0p25.f000&var_${var_name}=on&lev_${lev_name}=on&dir=%2Fgfs.${date}%2F${run}%2Fatmos" \
+              && [ -s "$output_file" ]
+          }
+
+          # Try the target run; if ANY variable is missing, fall back to the
+          # previous run AS A WHOLE, so every variable of one timestamp comes
+          # from the same model run and files are named after the run that was
+          # actually downloaded (no mislabeling).
+          current_date=${{ steps.gfs-info.outputs.gfs_date }}
+          current_run=${{ steps.gfs-info.outputs.gfs_run }}
+
+          for attempt in 1 2 3; do
+            if [ -f "processed-data/wind_${current_date}_${current_run}z.png" ]; then
+              echo "Run ${current_date}/${current_run}Z already processed — nothing to do"
+              echo "skip=true" >> $GITHUB_OUTPUT
+              echo "gfs_date=$current_date" >> $GITHUB_OUTPUT
+              echo "gfs_run=$current_run" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            echo "Attempt $attempt: downloading all variables for ${current_date}/${current_run}Z"
+            if download_var "UGRD" "10_m_above_ground" "raw-data/wind_u_current.grib" "$current_date" "$current_run" \
+              && download_var "VGRD" "10_m_above_ground" "raw-data/wind_v_current.grib" "$current_date" "$current_run" \
+              && download_var "TMP" "2_m_above_ground" "raw-data/temp_current.grib" "$current_date" "$current_run" \
+              && download_var "TCDC" "entire_atmosphere" "raw-data/cloud_current.grib" "$current_date" "$current_run" \
+              && download_var "REFC" "entire_atmosphere" "raw-data/reflectivity_current.grib" "$current_date" "$current_run"; then
+              echo "Downloaded all variables for ${current_date}/${current_run}Z"
+              echo "skip=false" >> $GITHUB_OUTPUT
+              echo "gfs_date=$current_date" >> $GITHUB_OUTPUT
+              echo "gfs_run=$current_run" >> $GITHUB_OUTPUT
+              ls -la raw-data/*.grib
+              exit 0
+            fi
+
+            # Step back one run (6 hours) and retry the full set
+            prev_ts=$(date -u -d "${current_date:0:4}-${current_date:4:2}-${current_date:6:2} ${current_run}:00:00 UTC - 6 hours" +%s)
+            current_date=$(date -u -d "@${prev_ts}" +%Y%m%d)
+            current_run=$(date -u -d "@${prev_ts}" +%H)
+            echo "Falling back to ${current_date}/${current_run}Z"
+          done
+
+          echo "Failed to download a complete run after 3 attempts"
+          exit 1
+
+      - name: Process GRIB to WeatherLayers format
+        if: steps.download.outputs.skip != 'true'
+        run: |
+          #!/bin/bash
+          set -e
+
+          gfs_date="${{ steps.download.outputs.gfs_date }}"
+          gfs_run="${{ steps.download.outputs.gfs_run }}"
+
           mkdir -p processed-data
-          
+
           # Wind processing: Create 3-band VRT (R=U, G=V, B=V) then scale to Byte
           echo "Processing wind data..."
           gdalbuildvrt -separate processed-data/wind_temp.vrt raw-data/wind_u_current.grib raw-data/wind_v_current.grib raw-data/wind_v_current.grib
-          
+
           gdal_translate -ot Byte -scale -128 127 0 255 -of PNG processed-data/wind_temp.vrt processed-data/wind_${gfs_date}_${gfs_run}z.png
           rm processed-data/wind_temp.vrt
-          
+
           # Temperature processing: Scale Celsius values to Byte
           echo "Processing temperature data..."
           gdal_translate -ot Byte -scale -60 52 0 255 -of PNG raw-data/temp_current.grib processed-data/temp_${gfs_date}_${gfs_run}z.png
-          
+
           # Cloud cover processing: Scale percentage to Byte (use semantic 0-100 range)
           echo "Processing cloud cover data..."
           gdal_translate -ot Byte -scale 0 100 0 255 -of PNG raw-data/cloud_current.grib processed-data/cloud_${gfs_date}_${gfs_run}z.png
-          
+
           # Reflectivity processing: Scale observed range to Byte
           echo "Processing reflectivity data..."
           gdal_translate -ot Byte -scale 0 60 0 255 -of PNG raw-data/reflectivity_current.grib processed-data/reflectivity_${gfs_date}_${gfs_run}z.png
-          
+
           # Verify all outputs are Byte format
           echo "=== OUTPUT VERIFICATION ==="
-          for file in processed-data/*.png; do
+          for file in processed-data/*_${gfs_date}_${gfs_run}z.png; do
             info=$(gdalinfo "$file" | grep "Type=")
             echo "$(basename $file): $info"
           done
-
-      - name: Commit and push processed data
-        run: |
-          #!/bin/bash
-          set -e
-          
-          gfs_date="${{ steps.gfs-info.outputs.gfs_date }}"
-          gfs_run="${{ steps.gfs-info.outputs.gfs_run }}"
-          
-          # Configure git
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          
-          # Add processed files
-          git add -A processed-data/
-          
-          # Check if there are changes to commit
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-          
-          # Commit with descriptive message
-          git commit -m "Add weather data for ${gfs_date} ${gfs_run}Z"
-          
-          # Push changes
-          git push
-
-          echo "✅ Successfully processed and committed weather data for ${gfs_date} ${gfs_run}Z"
 
       - name: Clean up old data (keep last 3 days)
         run: |
           echo "=== CLEANUP: Removing files older than 3 days ==="
 
-          # Calculate cutoff date (3 days ago)
           cutoff_date=$(date -u -d "3 days ago" +%Y%m%d)
           echo "Cutoff date: $cutoff_date (removing files older than this)"
 
           files_deleted=0
 
-          # Process PNG files and their associated aux.xml files
+          # Legacy GDAL sidecar files (no longer produced, GDAL_PAM_ENABLED=NO)
+          for file in processed-data/*.aux.xml; do
+            [ -e "$file" ] || continue
+            rm -f "$file"
+            files_deleted=$((files_deleted + 1))
+          done
+
           for file in processed-data/*.png; do
-            # Skip if no files match
             [ -e "$file" ] || continue
 
             # Extract date from filename (format: prefix_YYYYMMDD_HHz.png)
             file_date=$(basename "$file" | grep -oP '\d{8}' | head -1)
-
-            # Skip if no date found in filename
             [ -z "$file_date" ] && continue
 
-            # Compare dates and remove if older than cutoff
-            if [ "$file_date" -lt "$cutoff_date" ]; then
-              echo "Deleting: $file (date: $file_date)"
-              rm -f "$file"
-              rm -f "${file}.aux.xml" 2>/dev/null || true
-              files_deleted=$((files_deleted + 1))
-            fi
-          done
-
-          # Process JSON metadata files
-          for file in processed-data/*.json; do
-            # Skip if no files match
-            [ -e "$file" ] || continue
-
-            # Extract date from filename
-            file_date=$(basename "$file" | grep -oP '\d{8}' | head -1)
-
-            # Skip if no date found
-            [ -z "$file_date" ] && continue
-
-            # Compare and remove if old
             if [ "$file_date" -lt "$cutoff_date" ]; then
               echo "Deleting: $file (date: $file_date)"
               rm -f "$file"
               files_deleted=$((files_deleted + 1))
             fi
-          done
-
-          # Clean up raw GRIB files (delete all)
-          for file in raw-data/*.grib; do
-            [ -e "$file" ] || continue
-            echo "Deleting: $file"
-            rm -f "$file"
           done
 
           echo "=== CLEANUP COMPLETE: Deleted $files_deleted old data file(s) ==="
 
-          # Commit cleanup if any files were removed
-          if ! git diff --exit-code processed-data/ >/dev/null 2>&1; then
-            git config --local user.email "action@github.com"
-            git config --local user.name "GitHub Action"
-            git add processed-data/
-            git commit -m "Clean up old weather data (keep 3 days)"
-            git push
-            echo "Committed and pushed cleanup changes"
-          else
-            echo "No files to clean up"
+      - name: Update manifest
+        run: |
+          # manifest.json lists every available timestamp per variable so the
+          # frontend can fetch a single raw file instead of hitting the
+          # rate-limited GitHub contents API.
+          python3 - <<'PY'
+          import json, os, re, datetime
+
+          variables = {}
+          for name in sorted(os.listdir('processed-data')):
+              m = re.match(r'^(cloud|temp|reflectivity|wind)_(\d{8}_\d{2}z)\.png$', name)
+              if m:
+                  variables.setdefault(m.group(1), []).append(m.group(2))
+
+          manifest = {
+              'generated': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+              'variables': variables,
+          }
+          with open('processed-data/manifest.json', 'w') as fh:
+              json.dump(manifest, fh, indent=1)
+          print(json.dumps({k: len(v) for k, v in variables.items()}))
+          PY
+
+      - name: Commit and push
+        run: |
+          #!/bin/bash
+          set -e
+
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          git add -A processed-data/
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
           fi
+
+          if [ "${{ steps.download.outputs.skip }}" = "true" ]; then
+            git commit -m "Weather data maintenance (cleanup/manifest)"
+          else
+            git commit -m "Add weather data for ${{ steps.download.outputs.gfs_date }} ${{ steps.download.outputs.gfs_run }}Z"
+          fi
+
+          git push
+
+          echo "✅ Done"

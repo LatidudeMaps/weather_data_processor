@@ -31,8 +31,8 @@ The workflows process five key meteorological variables:
 
 | Variable | GRIB Parameter | Level | Description | Scale Range |
 |----------|----------------|-------|-------------|-------------|
-| **Wind U** | UGRD | 10m above ground | East-west wind component | -127 to 128 m/s → 0-255 |
-| **Wind V** | VGRD | 10m above ground | North-south wind component | -127 to 128 m/s → 0-255 |
+| **Wind U** | UGRD | 10m above ground | East-west wind component | -128 to 127 m/s → 0-255 |
+| **Wind V** | VGRD | 10m above ground | North-south wind component | -128 to 127 m/s → 0-255 |
 | **Temperature** | TMP | 2m above ground | Air temperature | -60 to 52°C → 0-255 |
 | **Cloud Cover** | TCDC | Entire atmosphere | Total cloud coverage | 0-100% → 0-255 |
 | **Reflectivity** | REFC | Entire atmosphere | Composite radar reflectivity | 0-60 dBZ → 0-255 |
@@ -69,12 +69,13 @@ All other variables use single-channel grayscale PNG format.
 - Can be manually triggered via `workflow_dispatch`
 
 **Logic**:
-- Determines the latest available GFS run based on current time
-- Accounts for 3-4 hour data availability delay
-- Falls back to previous runs if current data is unavailable
+- Targets the latest GFS run whose data should be published (now − 4h, floored to the 6-hour grid), so it is robust to GitHub's cron delays
+- Falls back to the previous run *as a whole* if any variable is unavailable — output files are always named after the run actually downloaded
+- Skips processing when the target run is already in the repository
+- Regenerates `processed-data/manifest.json` (per-variable list of available timestamps) so consumers can avoid the rate-limited GitHub API
 - Processes and commits new data to the repository
 
-**Data Retention**: Keeps last 20 days of data (configurable)
+**Data Retention**: Keeps last 3 days of data (configurable)
 
 ### Historical Weather Data (`pastdays-weather.yml`)
 
